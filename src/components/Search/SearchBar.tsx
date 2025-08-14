@@ -27,7 +27,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
-  const debounceRef = useRef<NodeJS.Timeout>();
+  const debounceRef = useRef<number>();
   const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -74,18 +74,20 @@ const SearchBar: React.FC<SearchBarProps> = ({
     }, 300);
   };
 
-  const handleResultSelect = (result: SearchResult, centerMap = false) => {
+  const handleResultSelect = (result: SearchResult) => {
     setQuery(result.display_name);
     setShowResults(false);
     
     const lat = parseFloat(result.lat);
     const lng = parseFloat(result.lon);
     
-    if (centerMap && onMapCenter) {
+    // Always center the map when a location is selected
+    if (onMapCenter) {
       onMapCenter({ lat, lng }, 15);
-    } else {
-      onLocationSelect(lat, lng, result.display_name);
     }
+    
+    // Also call the location select handler
+    onLocationSelect(lat, lng, result.display_name);
   };
 
   const handleClipboardSelect = (item: { location: { lat: number; lng: number }; name: string }) => {
@@ -188,7 +190,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleResultSelect(result, true);
+                            handleResultSelect(result);
                           }}
                           className="p-1 text-blue-600 hover:bg-blue-100 rounded"
                           title="View on map"

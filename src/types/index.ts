@@ -9,6 +9,8 @@ export interface SearchResult {
   lat: string;
   lon: string;
   importance: number;
+  type?: string;
+  boundingbox?: string[];
 }
 
 export interface Route {

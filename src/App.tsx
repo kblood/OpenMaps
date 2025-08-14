@@ -48,7 +48,12 @@ function App() {
     
     setMarkers(prev => [newMarker, ...prev.filter(m => !m.id.startsWith('search-'))]);
 
-  }, [handleMapCenter]);
+    // If RoutePanel is open, populate the "To" field
+    if (showDirections) {
+      setRecentMapClick({ location: newCenter, name });
+    }
+
+  }, [handleMapCenter, showDirections]);
 
   const handleMapClick = useCallback(async (location: Location) => {
     try {
@@ -71,10 +76,32 @@ function App() {
       
       // Update recent map click for RoutePanel clipboard
       setRecentMapClick({ location, name: address });
+      
+      // If RoutePanel is open, also suggest using this location
+      if (showDirections) {
+        setRecentMapClick({ location, name: address });
+      }
     } catch (error) {
       console.error('Failed to reverse geocode:', error);
+      // Fallback to GPS coordinates
+      const gpsCoords = `${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}`;
+      
+      if (routePanelMapClickCallbackRef.current) {
+        routePanelMapClickCallbackRef.current(location, gpsCoords);
+        return;
+      }
+      
+      const newMarker: Marker = {
+        id: `click-${Date.now()}`,
+        position: location,
+        title: 'GPS Location',
+        description: gpsCoords
+      };
+      
+      setMarkers(prev => [newMarker, ...prev.filter(m => !m.id.startsWith('click-')).slice(0, 4)]);
+      setRecentMapClick({ location, name: gpsCoords });
     }
-  }, []);
+  }, [showDirections]);
 
   const handleZoomIn = useCallback(() => {
     if (map) {
