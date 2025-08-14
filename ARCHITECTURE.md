@@ -43,10 +43,12 @@ OpenMaps is a modern, open-source alternative to Google Maps built with a micros
 - **Rate Limiting** - API protection
 
 ### External Services
-- **OpenStreetMap** - Map tiles and geographic data
-- **Nominatim** - Geocoding service
-- **OSRM (Open Source Routing Machine)** - Routing calculations
-- **Overpass API** - Places and POI data
+- **OpenStreetMap** - Map tiles and comprehensive geographic data
+- **Nominatim** - Advanced geocoding and reverse geocoding service
+- **OSRM (Open Source Routing Machine)** - High-performance driving route calculations
+- **Valhalla** - Pedestrian and cycling routes with superior path coverage
+- **GraphHopper** - Specialized routing profiles with fallback capabilities
+- **Overpass API** - Places and points of interest data
 
 ## Project Structure
 
@@ -107,16 +109,22 @@ openmaps/
 - Integrates with external tile providers
 
 #### SearchBar (`src/components/Search/SearchBar.tsx`)
-- Location search and autocomplete
-- Geocoding integration
-- Search history and suggestions
-- Responsive design for mobile/desktop
+- Advanced location search with real-time autocomplete
+- Recent locations clipboard with persistent storage
+- Intelligent dropdown handling with mousedown events
+- Geocoding integration with caching
+- Responsive design optimized for mobile/desktop
+- Debug logging and error handling
 
 #### RoutePanel (`src/components/Routing/RoutePanel.tsx`)
-- Route planning interface
-- Start/end point selection
-- Route alternatives display
-- Turn-by-turn directions
+- Comprehensive multi-modal route planning interface
+- Enhanced start/end point selection with map integration
+- Seven transportation modes (driving, walking, running, cycling, hiking, mountain biking, racing bike)
+- Route alternatives with intelligent service selection
+- Recent locations clipboard integration
+- Route history and saved routes functionality
+- Real-time route metrics and analytics
+- Turn-by-turn directions with detailed instructions
 
 #### MapControls (`src/components/UI/MapControls.tsx`)
 - Zoom in/out controls
@@ -133,10 +141,16 @@ openmaps/
 - Integration with Nominatim API
 
 #### Routing Service (`backend/src/routes/routing.ts`)
-- Route calculation between points
-- Multiple route alternatives
-- Distance and duration estimates
-- Integration with OSRM
+- Multi-service routing with intelligent service selection
+- Support for seven transportation profiles
+- OSRM integration for high-performance driving routes
+- Valhalla integration for enhanced pedestrian and cycling routes
+- GraphHopper integration with API key fallback
+- Automatic service failover and error handling
+- Route alternatives with comprehensive metrics
+- Advanced pedestrian routing with footway preferences
+- Cycling-specific optimizations for different bike types
+- Polyline decoding and format conversion
 
 #### Places Service (`backend/src/routes/places.ts`)
 - Points of Interest search
@@ -160,12 +174,19 @@ openmaps/
 5. Response sent to frontend
 6. Map centers on selected location
 
-### Routing Flow
-1. User selects start and end points
-2. Frontend sends request to `/api/routing/directions`
-3. Backend queries OSRM API
-4. Route data processed and cached
-5. Route displayed on map with turn-by-turn directions
+### Enhanced Routing Flow
+1. User selects start and end points via SearchBar or map clicks
+2. User chooses transportation mode (driving, walking, cycling, etc.)
+3. Frontend sends request to `/api/routing/directions` with profile parameter
+4. Backend intelligently selects routing service:
+   - OSRM for driving routes (fastest performance)
+   - Valhalla for pedestrian/cycling (superior path coverage)
+   - GraphHopper as fallback with specialized profiles
+5. Service-specific optimizations applied (footway preferences, bike types)
+6. Route data processed, formatted, and cached with service attribution
+7. Multiple route alternatives calculated if requested
+8. Route displayed on map with detailed turn-by-turn directions
+9. Route metrics and analytics displayed in RoutePanel
 
 ### Places Flow
 1. User searches for places or categories
@@ -184,11 +205,40 @@ openmaps/
 
 ## Performance Optimizations
 
-- **Redis Caching** - API response caching
-- **Code Splitting** - Lazy loading of components
-- **Image Optimization** - Optimized map tiles
+- **Intelligent Service Selection** - Route requests to optimal routing services
+- **Multi-layer Redis Caching** - API response caching with TTL management
+- **Automatic Service Failover** - Fallback routing when primary services fail
+- **Recent Locations Persistence** - localStorage for instant clipboard access
+- **Code Splitting** - Lazy loading of components and route chunks
+- **Image Optimization** - Optimized map tiles and icon delivery
 - **Compression** - Gzip compression for API responses
-- **Bundle Optimization** - Tree-shaking and minification
+- **Bundle Optimization** - Tree-shaking and minification with Vite
+- **Debounced Search** - Reduced API calls during typing
+- **Event Optimization** - mousedown vs click for better UX timing
+
+## Recent Improvements and Bug Fixes
+
+### Enhanced Multi-Modal Routing (v1.2.0)
+- **Intelligent Service Selection**: Automatically routes pedestrian/cycling requests to Valhalla for superior path coverage
+- **Seven Transportation Modes**: Added hiking, mountain biking, and racing bike profiles
+- **Service Attribution**: Route results show which service was used (OSRM/Valhalla/GraphHopper)
+- **Automatic Fallback**: Seamless fallback to OSRM when specialized services fail
+- **Advanced Pedestrian Options**: Walkway factor, sidewalk preferences, step penalties
+- **Cycling Optimizations**: Different bike types with speed and road usage preferences
+
+### Search and UI Improvements (v1.1.5)
+- **Recent Locations Clipboard**: Persistent storage of recent searches and map clicks
+- **Dropdown Click Fix**: Resolved event timing issue where blur events prevented clicks
+- **Enhanced SearchBar**: Real-time autocomplete with improved UX
+- **Visual Debug Features**: Added debugging indicators for development
+- **Map Integration**: Click-to-route functionality with marker management
+
+### Performance and Reliability (v1.1.0)
+- **Caching Strategy**: Extended Redis caching to all routing services
+- **Error Handling**: Comprehensive error handling with graceful degradation
+- **Event Timing**: mousedown vs onClick optimization for dropdown interactions
+- **Debug Logging**: Extensive logging for troubleshooting complex interactions
+- **Type Safety**: Enhanced TypeScript definitions across all components
 
 ## Development Workflow
 
