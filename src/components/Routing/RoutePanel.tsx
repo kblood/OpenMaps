@@ -66,6 +66,35 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
   const [isSelectingStart, setIsSelectingStart] = useState(false);
   const [isSelectingEnd, setIsSelectingEnd] = useState(false);
   
+  // Create stable callback refs
+  const startLocationRef = useRef(startLocation);
+  const endLocationRef = useRef(endLocation);
+  const calculateRouteIfReadyRef = useRef<((start: Location | null, end: Location | null) => void) | null>(null);
+  
+  useEffect(() => {
+    startLocationRef.current = startLocation;
+    endLocationRef.current = endLocation;
+  }, [startLocation, endLocation]);
+
+  // Define addToClipboard first before using it
+  const addToClipboard = useCallback((location: Location, name: string) => {
+    const clipboardItem: ClipboardLocation = {
+      location,
+      name,
+      timestamp: new Date()
+    };
+    
+    setClipboard(prevClipboard => {
+      const newClipboard = [clipboardItem, ...prevClipboard.filter(item => 
+        Math.abs(item.location.lat - location.lat) > 0.0001 || 
+        Math.abs(item.location.lng - location.lng) > 0.0001
+      ).slice(0, 9)];
+      
+      localStorage.setItem('openmap_location_clipboard', JSON.stringify(newClipboard));
+      return newClipboard;
+    });
+  }, []);
+
   // Load saved data on component mount
   useEffect(() => {
     const saved = localStorage.getItem('openmap_saved_routes');
@@ -81,17 +110,7 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
     if (recentMapClick) {
       addToClipboard(recentMapClick.location, recentMapClick.name);
     }
-  }, [recentMapClick]);
-
-  // Create stable callback refs
-  const startLocationRef = useRef(startLocation);
-  const endLocationRef = useRef(endLocation);
-  const calculateRouteIfReadyRef = useRef<((start: Location | null, end: Location | null) => void) | null>(null);
-  
-  useEffect(() => {
-    startLocationRef.current = startLocation;
-    endLocationRef.current = endLocation;
-  }, [startLocation, endLocation]);
+  }, [recentMapClick, addToClipboard]);
 
   // Stable callback for map destination selection
   const mapClickHandler = useCallback((location: Location, name: string) => {
@@ -126,24 +145,6 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
       onSetDestinationFromMap(mapClickHandler);
     }
   }, [onSetDestinationFromMap, mapClickHandler]);
-
-  const addToClipboard = useCallback((location: Location, name: string) => {
-    const clipboardItem: ClipboardLocation = {
-      location,
-      name,
-      timestamp: new Date()
-    };
-    
-    setClipboard(prevClipboard => {
-      const newClipboard = [clipboardItem, ...prevClipboard.filter(item => 
-        Math.abs(item.location.lat - location.lat) > 0.0001 || 
-        Math.abs(item.location.lng - location.lng) > 0.0001
-      ).slice(0, 9)];
-      
-      localStorage.setItem('openmap_location_clipboard', JSON.stringify(newClipboard));
-      return newClipboard;
-    });
-  }, []);
 
   const selectFromClipboard = useCallback((clipboardItem: ClipboardLocation, isStart: boolean) => {
     if (isStart) {
@@ -540,7 +541,7 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
               onMapCenter={onMapCenter}
               showMapOptions={true}
               clipboard={clipboard}
-              onClipboardSelect={(item) => selectFromClipboard(item, true)}
+              onClipboardSelect={(item) => selectFromClipboard({ ...item, timestamp: new Date() }, true)}
             />
             <button
               onClick={getCurrentLocation}
@@ -597,7 +598,7 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
               onMapCenter={onMapCenter}
               showMapOptions={true}
               clipboard={clipboard}
-              onClipboardSelect={(item) => selectFromClipboard(item, false)}
+              onClipboardSelect={(item) => selectFromClipboard({ ...item, timestamp: new Date() }, false)}
             />
             <button
               onClick={() => setIsSelectingEnd(!isSelectingEnd)}
