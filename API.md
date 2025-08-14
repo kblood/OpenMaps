@@ -200,14 +200,30 @@ Calculate a route between two or more points.
 - `start` (string, required) - Start coordinates in format "lat,lng"
 - `end` (string, required) - End coordinates in format "lat,lng"
 - `waypoints` (string, optional) - Intermediate points in format "lat1,lng1;lat2,lng2"
-- `profile` (string, optional) - Routing profile: "driving", "walking", "cycling" (default: "driving")
+- `profile` (string, optional) - Routing profile: "driving", "walking", "cycling", "running", "hiking", "mountain_biking", "racing_bike" (default: "driving")
 - `alternatives` (boolean, optional) - Include alternative routes (default: false)
 - `steps` (boolean, optional) - Include turn-by-turn instructions (default: true)
 - `geometries` (string, optional) - Geometry format: "geojson", "polyline", "polyline6" (default: "geojson")
 
+**Enhanced Routing Profiles with Multi-Service Support:**
+
+The API now intelligently routes using the best service for each profile:
+- `driving` - Car routing using OSRM (fastest performance)
+- `walking` - Pedestrian routing with enhanced footway/sidewalk support via **Valhalla**
+- `running` - Running routes with path and trail support via **Valhalla**  
+- `cycling` - Bicycle routing with bike lane and path support via **Valhalla**
+- `hiking` - Hiking trails and footpaths with enhanced difficulty support via **Valhalla**
+- `mountain_biking` - Mountain bike trails and off-road paths via **Valhalla**
+- `racing_bike` - Road cycling optimized for speed via **Valhalla**
+
+**Routing Service Selection:**
+- **Valhalla**: Used for pedestrian and cycling routes - provides superior footway, sidewalk, bike path, and trail coverage
+- **OSRM**: Used for driving routes - provides fastest car routing performance
+- **Fallback**: Automatic fallback to OSRM if Valhalla is unavailable
+
 **Example Request:**
 ```
-GET /api/routing/directions?start=40.7484405,-73.9878584&end=40.7589,-73.9851&profile=driving&alternatives=true&steps=true
+GET /api/routing/directions?start=40.7484405,-73.9878584&end=40.7589,-73.9851&profile=hiking&alternatives=true&steps=true
 ```
 
 **Example Response:**
@@ -279,7 +295,7 @@ Get multiple route options between two points.
 **Parameters:**
 - `start` (string, required) - Start coordinates in format "lat,lng"
 - `end` (string, required) - End coordinates in format "lat,lng"
-- `profile` (string, optional) - Routing profile (default: "driving")
+- `profile` (string, optional) - Routing profile: "driving", "walking", "cycling", "running", "hiking", "mountain_biking", "racing_bike" (default: "driving")
 - `number` (number, optional) - Number of alternatives (1-3, default: 3)
 
 **Example Response:**

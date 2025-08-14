@@ -31,6 +31,19 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const debounceRef = useRef<number>();
   const searchRef = useRef<HTMLDivElement>(null);
 
+  // Debug logging
+  console.log('SearchBar render - clipboard length:', clipboard.length);
+  console.log('SearchBar render - showResults:', showResults);
+  console.log('SearchBar render - isFocused:', isFocused);
+  console.log('SearchBar render - query:', query);
+  console.log('SearchBar render - clipboard items:', clipboard);
+  
+  // Test data - populate if empty
+  const testClipboard = clipboard.length === 0 ? [
+    { location: { lat: 40.7484, lng: -73.9857 }, name: "Test Location 1, New York, NY", timestamp: new Date() },
+    { location: { lat: 40.7589, lng: -73.9851 }, name: "Test Location 2, Central Park, NY", timestamp: new Date() }
+  ] : clipboard;
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
@@ -79,47 +92,55 @@ const SearchBar: React.FC<SearchBarProps> = ({
     setIsFocused(true);
     setShowResults(true);
     // If no query and we have clipboard items, show them immediately
-    if (!query.trim() && clipboard.length > 0) {
+    if (!query.trim() && testClipboard.length > 0) {
       setResults([]);
     }
   };
 
   const handleInputBlur = () => {
     setIsFocused(false);
-    // Delay hiding results to allow clicking on them
+    // Delay hiding results to allow clicking on them - increased timeout
     setTimeout(() => {
       setShowResults(false);
-    }, 200);
+    }, 500);
   };
 
   const handleResultSelect = (result: SearchResult) => {
-    console.log('SearchBar: handleResultSelect called with:', result);
     setQuery(result.display_name);
     setShowResults(false);
     
     const lat = parseFloat(result.lat);
     const lng = parseFloat(result.lon);
-    console.log('SearchBar: Parsed coordinates:', { lat, lng });
     
     // Always center the map when a location is selected
     if (onMapCenter) {
-      console.log('SearchBar: Calling onMapCenter with:', { lat, lng }, 15);
       onMapCenter({ lat, lng }, 15);
-    } else {
-      console.log('SearchBar: onMapCenter is not available');
     }
     
     // Also call the location select handler
-    console.log('SearchBar: Calling onLocationSelect');
     onLocationSelect(lat, lng, result.display_name);
   };
 
   const handleClipboardSelect = (item: { location: { lat: number; lng: number }; name: string }) => {
+    console.log('handleClipboardSelect called with:', item);
+    console.log('onMapCenter:', !!onMapCenter);
+    console.log('onClipboardSelect:', !!onClipboardSelect);
+    console.log('onLocationSelect:', !!onLocationSelect);
+    
     setQuery(item.name);
     setShowResults(false);
+    
+    // Always center the map when a location is selected from clipboard
+    if (onMapCenter) {
+      console.log('Calling onMapCenter with:', item.location);
+      onMapCenter(item.location, 15);
+    }
+    
     if (onClipboardSelect) {
+      console.log('Calling onClipboardSelect');
       onClipboardSelect(item);
     } else {
+      console.log('Calling onLocationSelect fallback');
       onLocationSelect(item.location.lat, item.location.lng, item.name);
     }
   };
@@ -128,7 +149,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
     setQuery('');
     setResults([]);
     // Keep showing results if we have clipboard items and input is focused
-    if (clipboard.length > 0 && isFocused) {
+    if (testClipboard.length > 0 && isFocused) {
       setShowResults(true);
     } else {
       setShowResults(false);
@@ -162,36 +183,50 @@ const SearchBar: React.FC<SearchBarProps> = ({
         )}
       </div>
 
-      {showResults && (results.length > 0 || isLoading || (clipboard.length > 0 && (!query.trim() || isFocused))) && (
-        <div className="absolute z-10 mt-1 w-full bg-white shadow-lg rounded-md border border-gray-200 max-h-80 overflow-auto">
+      {showResults && (results.length > 0 || isLoading || (testClipboard.length > 0 && (!query.trim() || isFocused))) && (
+        <div 
+          className="absolute z-10 mt-1 w-full bg-white shadow-lg rounded-md border border-gray-200 max-h-80 overflow-auto"
+          onMouseDown={(e) => {
+            // Prevent the input blur when clicking inside dropdown
+            e.preventDefault();
+          }}
+        >
           {/* Clipboard Section - Show when focused and no query, or when no search results */}
-          {clipboard.length > 0 && !isLoading && ((!query.trim() && isFocused) || (query.trim() && results.length === 0)) && (
+          {testClipboard.length > 0 && !isLoading && ((!query.trim() && isFocused) || (query.trim() && results.length === 0)) && (
             <>
               <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
                 <div className="flex items-center text-xs font-medium text-gray-600">
                   <Copy className="h-3 w-3 mr-1" />
-                  Recent Locations
+                  Recent Locations ({testClipboard.length} items)
                 </div>
               </div>
-              {clipboard.slice(0, 5).map((item, index) => (
-                <button
-                  key={index}
-                  onClick={() => handleClipboardSelect(item)}
-                  className="w-full px-4 py-3 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none border-b border-gray-100"
-                >
-                  <div className="flex items-start">
-                    <MapPin className="h-4 w-4 text-blue-400 mt-0.5 mr-3 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">
-                        {item.name.split(',')[0]}
-                      </p>
-                      <p className="text-xs text-gray-500 truncate">
-                        {item.name}
-                      </p>
+              {testClipboard.slice(0, 5).map((item, index) => {
+                console.log(`Rendering clipboard item ${index}:`, item);
+                return (
+                  <button
+                    key={index}
+                    onMouseDown={(e) => {
+                      console.log('Clipboard item mousedown:', item);
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleClipboardSelect(item);
+                    }}
+                    className="w-full px-4 py-3 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none border-b border-gray-100 bg-yellow-50 border-2 border-red-500"
+                  >
+                    <div className="flex items-start">
+                      <MapPin className="h-4 w-4 text-blue-400 mt-0.5 mr-3 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {item.name.split(',')[0]}
+                        </p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {item.name}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </>
           )}
           

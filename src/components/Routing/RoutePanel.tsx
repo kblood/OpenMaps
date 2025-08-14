@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Navigation, MapPin, Clock, Map, X, ArrowUpDown, MapPin as CurrentLocation, Car, User, Bike, Footprints, Star, History, Settings, BarChart3, MousePointer, Copy } from 'lucide-react';
+import { Navigation, MapPin, Clock, Map, X, ArrowUpDown, MapPin as CurrentLocation, Car, User, Bike, Footprints, Mountain, Trees, Zap, Star, History, Settings, BarChart3, MousePointer, Copy } from 'lucide-react';
 import { Location, Route } from '../../types';
 import { getRoute, getRouteAlternatives, formatDistance, formatDuration, calculateRouteMetrics } from '../../services/routing';
 import { reverseGeocode } from '../../services/geocoding';
 import SearchBar from '../Search/SearchBar';
 
-export type RouteMode = 'driving' | 'walking' | 'cycling' | 'running';
+export type RouteMode = 'driving' | 'walking' | 'cycling' | 'running' | 'hiking' | 'mountain_biking' | 'racing_bike';
 export type RoutePreference = 'fastest' | 'shortest' | 'balanced';
 
 export interface RouteOptions {
@@ -149,6 +149,11 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
   }, [onSetDestinationFromMap, mapClickHandler]);
 
   const selectFromClipboard = useCallback((clipboardItem: ClipboardLocation, isStart: boolean) => {
+    // Center the map on the selected location
+    if (onMapCenter) {
+      onMapCenter(clipboardItem.location, 15);
+    }
+    
     if (isStart) {
       setStartLocation(clipboardItem.location);
       setStartName(clipboardItem.name);
@@ -170,7 +175,7 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
         calculateRouteIfReadyRef.current(startLocationRef.current, clipboardItem.location);
       }
     }
-  }, [endName, startName, onSetRouteMarkers, addToClipboard]);
+  }, [endName, startName, onSetRouteMarkers, addToClipboard, onMapCenter]);
 
   const handleStartLocationSelect = (lat: number, lng: number, name: string) => {
     const location = { lat, lng };
@@ -412,14 +417,20 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
     driving: Car,
     walking: User,
     cycling: Bike,
-    running: Footprints
+    running: Footprints,
+    hiking: Mountain,
+    mountain_biking: Trees,
+    racing_bike: Zap
   };
 
   const routeModeLabels = {
     driving: 'Drive',
     walking: 'Walk', 
     cycling: 'Bike',
-    running: 'Run'
+    running: 'Run',
+    hiking: 'Hike',
+    mountain_biking: 'MTB',
+    racing_bike: 'Race'
   };
 
   return (
@@ -464,29 +475,76 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
 
       {/* Route Mode Selection */}
       <div className="mb-4">
-        <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
-          {(Object.keys(routeModeIcons) as RouteMode[]).map((mode) => {
-            const Icon = routeModeIcons[mode];
-            return (
-              <button
-                key={mode}
-                onClick={() => {
-                  setRouteMode(mode);
-                  if (startLocation && endLocation) {
-                    calculateRouteIfReady(startLocation, endLocation);
-                  }
-                }}
-                className={`flex-1 flex items-center justify-center py-2 px-3 rounded-md text-xs font-medium transition-colors ${
-                  routeMode === mode
-                    ? 'bg-white text-blue-600 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                <Icon className="h-4 w-4 mr-1" />
-                {routeModeLabels[mode]}
-              </button>
-            );
-          })}
+        <div className="space-y-2">
+          {/* Primary modes */}
+          <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
+            {(['driving', 'walking', 'cycling', 'running'] as RouteMode[]).map((mode) => {
+              const Icon = routeModeIcons[mode];
+              return (
+                <button
+                  key={mode}
+                  onClick={() => {
+                    setRouteMode(mode);
+                    if (startLocation && endLocation) {
+                      calculateRouteIfReady(startLocation, endLocation);
+                    }
+                  }}
+                  className={`flex-1 flex items-center justify-center py-2 px-3 rounded-md text-xs font-medium transition-colors ${
+                    routeMode === mode
+                      ? 'bg-white text-blue-600 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <Icon className="h-4 w-4 mr-1" />
+                  {routeModeLabels[mode]}
+                </button>
+              );
+            })}
+          </div>
+          
+          {/* Specialized outdoor modes */}
+          <div className="flex space-x-1 bg-green-50 rounded-lg p-1 border border-green-200">
+            {(['hiking', 'mountain_biking', 'racing_bike'] as RouteMode[]).map((mode) => {
+              const Icon = routeModeIcons[mode];
+              return (
+                <button
+                  key={mode}
+                  onClick={() => {
+                    setRouteMode(mode);
+                    if (startLocation && endLocation) {
+                      calculateRouteIfReady(startLocation, endLocation);
+                    }
+                  }}
+                  className={`flex-1 flex items-center justify-center py-2 px-2 rounded-md text-xs font-medium transition-colors ${
+                    routeMode === mode
+                      ? 'bg-green-600 text-white shadow-sm'
+                      : 'text-green-700 hover:text-green-800 hover:bg-green-100'
+                  }`}
+                  title={`${routeModeLabels[mode]} - Uses trails, paths, and specialized routes`}
+                >
+                  <Icon className="h-4 w-4 mr-1" />
+                  {routeModeLabels[mode]}
+                </button>
+              );
+            })}
+          </div>
+          
+          {/* Route service indicator */}
+          {route && route.service && (
+            <div className="text-xs text-gray-500 text-center">
+              Powered by {
+                route.service === 'valhalla' ? 'Valhalla' :
+                route.service === 'graphhopper' ? 'GraphHopper' : 
+                route.service === 'osrm-fallback' ? 'OSRM (fallback)' : 'OSRM'
+              }
+              {route.service === 'valhalla' && 
+                <span className="ml-1 text-green-600">• Enhanced footway & trail support</span>
+              }
+              {(['hiking', 'mountain_biking', 'racing_bike'].includes(routeMode)) && 
+                <span className="ml-1 text-green-600">• Specialized routing</span>
+              }
+            </div>
+          )}
         </div>
       </div>
 

@@ -26,6 +26,15 @@ export interface Route {
       duration: number;
     }>;
   }>;
+  service?: string;
+  profile?: string;
+  summary?: {
+    distance: number;
+    duration: number;
+    profile?: string;
+    service?: string;
+    waypoints?: Array<{ lat: number; lng: number }>;
+  };
 }
 
 export interface Marker {
