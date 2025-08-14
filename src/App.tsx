@@ -23,18 +23,25 @@ function App() {
   const routePanelMapClickCallbackRef = useRef<((location: Location, name: string) => void) | null>(null);
   const [routeStartMarker, setRouteStartMarker] = useState<{location: Location; name: string} | null>(null);
   const [routeEndMarker, setRouteEndMarker] = useState<{location: Location; name: string} | null>(null);
+  const routeMarkerDragHandlerRef = useRef<((isStart: boolean, location: Location, name: string) => void) | null>(null);
 
   const { location, loading: locating, getCurrentLocation } = useGeolocation();
 
   const handleMapCenter = useCallback((location: Location, zoomLevel = 15) => {
+    console.log('App: handleMapCenter called with:', location, zoomLevel);
+    console.log('App: map instance available:', !!map);
     setMapCenter(location);
     setZoom(zoomLevel);
     if (map) {
+      console.log('App: Calling map.setView');
       map.setView([location.lat, location.lng], zoomLevel);
+    } else {
+      console.log('App: Map instance not available yet');
     }
   }, [map]);
 
   const handleLocationSelect = useCallback((lat: number, lng: number, name: string) => {
+    console.log('App: handleLocationSelect called with:', { lat, lng, name });
     const newCenter = { lat, lng };
     handleMapCenter(newCenter, 15);
     
@@ -120,6 +127,7 @@ function App() {
   }, [getCurrentLocation]);
 
   const handleMapReady = useCallback((mapInstance: LeafletMap) => {
+    console.log('App: Map instance ready:', mapInstance);
     setMap(mapInstance);
   }, []);
 
@@ -157,14 +165,32 @@ function App() {
   const handleRouteMarkerDrag = useCallback(async (isStart: boolean, location: Location) => {
     try {
       const address = await reverseGeocode(location.lat, location.lng);
+      
+      // Update local state
       if (isStart) {
         setRouteStartMarker({ location, name: address });
       } else {
         setRouteEndMarker({ location, name: address });
       }
-      // Trigger route recalculation in RoutePanel would need additional callback
+      
+      // Notify RoutePanel to update its state and recalculate route
+      if (routeMarkerDragHandlerRef.current) {
+        routeMarkerDragHandlerRef.current(isStart, location, address);
+      }
     } catch (error) {
       console.error('Failed to reverse geocode dragged marker:', error);
+      // Fallback to coordinates
+      const coordinates = `${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}`;
+      
+      if (isStart) {
+        setRouteStartMarker({ location, name: coordinates });
+      } else {
+        setRouteEndMarker({ location, name: coordinates });
+      }
+      
+      if (routeMarkerDragHandlerRef.current) {
+        routeMarkerDragHandlerRef.current(isStart, location, coordinates);
+      }
     }
   }, []);
 
@@ -175,6 +201,10 @@ function App() {
 
   const handleSetDestinationFromMap = useCallback((callback: (location: Location, name: string) => void) => {
     routePanelMapClickCallbackRef.current = callback;
+  }, []);
+
+  const handleSetRouteMarkerDragHandler = useCallback((handler: (isStart: boolean, location: Location, name: string) => void) => {
+    routeMarkerDragHandlerRef.current = handler;
   }, []);
 
   const closeDirections = () => {
@@ -218,6 +248,7 @@ function App() {
             onSetDestinationFromMap={handleSetDestinationFromMap}
             recentMapClick={recentMapClick}
             onSetRouteMarkers={handleSetRouteMarkers}
+            onSetRouteMarkerDragHandler={handleSetRouteMarkerDragHandler}
           />
         </div>
       )}

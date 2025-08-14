@@ -27,6 +27,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const debounceRef = useRef<number>();
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -74,19 +75,42 @@ const SearchBar: React.FC<SearchBarProps> = ({
     }, 300);
   };
 
+  const handleInputFocus = () => {
+    setIsFocused(true);
+    setShowResults(true);
+    // If no query and we have clipboard items, show them immediately
+    if (!query.trim() && clipboard.length > 0) {
+      setResults([]);
+    }
+  };
+
+  const handleInputBlur = () => {
+    setIsFocused(false);
+    // Delay hiding results to allow clicking on them
+    setTimeout(() => {
+      setShowResults(false);
+    }, 200);
+  };
+
   const handleResultSelect = (result: SearchResult) => {
+    console.log('SearchBar: handleResultSelect called with:', result);
     setQuery(result.display_name);
     setShowResults(false);
     
     const lat = parseFloat(result.lat);
     const lng = parseFloat(result.lon);
+    console.log('SearchBar: Parsed coordinates:', { lat, lng });
     
     // Always center the map when a location is selected
     if (onMapCenter) {
+      console.log('SearchBar: Calling onMapCenter with:', { lat, lng }, 15);
       onMapCenter({ lat, lng }, 15);
+    } else {
+      console.log('SearchBar: onMapCenter is not available');
     }
     
     // Also call the location select handler
+    console.log('SearchBar: Calling onLocationSelect');
     onLocationSelect(lat, lng, result.display_name);
   };
 
@@ -103,7 +127,12 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const clearSearch = () => {
     setQuery('');
     setResults([]);
-    setShowResults(false);
+    // Keep showing results if we have clipboard items and input is focused
+    if (clipboard.length > 0 && isFocused) {
+      setShowResults(true);
+    } else {
+      setShowResults(false);
+    }
   };
 
   return (
@@ -116,6 +145,8 @@ const SearchBar: React.FC<SearchBarProps> = ({
           type="text"
           value={query}
           onChange={handleInputChange}
+          onFocus={handleInputFocus}
+          onBlur={handleInputBlur}
           placeholder={placeholder}
           className="block w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 shadow-lg"
         />
@@ -131,10 +162,10 @@ const SearchBar: React.FC<SearchBarProps> = ({
         )}
       </div>
 
-      {showResults && (results.length > 0 || isLoading || clipboard.length > 0) && (
+      {showResults && (results.length > 0 || isLoading || (clipboard.length > 0 && (!query.trim() || isFocused))) && (
         <div className="absolute z-10 mt-1 w-full bg-white shadow-lg rounded-md border border-gray-200 max-h-80 overflow-auto">
-          {/* Clipboard Section */}
-          {clipboard.length > 0 && !isLoading && results.length === 0 && (
+          {/* Clipboard Section - Show when focused and no query, or when no search results */}
+          {clipboard.length > 0 && !isLoading && ((!query.trim() && isFocused) || (query.trim() && results.length === 0)) && (
             <>
               <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
                 <div className="flex items-center text-xs font-medium text-gray-600">
@@ -142,7 +173,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
                   Recent Locations
                 </div>
               </div>
-              {clipboard.slice(0, 3).map((item, index) => (
+              {clipboard.slice(0, 5).map((item, index) => (
                 <button
                   key={index}
                   onClick={() => handleClipboardSelect(item)}
@@ -171,9 +202,9 @@ const SearchBar: React.FC<SearchBarProps> = ({
           ) : (
             results.map((result) => (
               <div key={result.place_id} className="group">
-                <button
+                <div
                   onClick={() => handleResultSelect(result)}
-                  className="w-full px-4 py-3 text-left hover:bg-gray-50 focus:bg-gray-50 focus:outline-none border-b border-gray-100 last:border-b-0"
+                  className="w-full px-4 py-3 text-left hover:bg-gray-50 focus:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
                 >
                   <div className="flex items-start">
                     <MapPin className="h-4 w-4 text-gray-400 mt-0.5 mr-3 flex-shrink-0" />
@@ -210,7 +241,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
                       </div>
                     )}
                   </div>
-                </button>
+                </div>
               </div>
             ))
           )}

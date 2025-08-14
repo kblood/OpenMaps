@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Navigation, MapPin, Clock, Map, X, ArrowUpDown, MapPin as CurrentLocation, Car, User, Bike, Footprints, Star, History, Settings, BarChart3, MousePointer, Copy } from 'lucide-react';
 import { Location, Route } from '../../types';
 import { getRoute, getRouteAlternatives, formatDistance, formatDuration, calculateRouteMetrics } from '../../services/routing';
+import { reverseGeocode } from '../../services/geocoding';
 import SearchBar from '../Search/SearchBar';
 
 export type RouteMode = 'driving' | 'walking' | 'cycling' | 'running';
@@ -39,9 +40,10 @@ interface RoutePanelProps {
   onSetDestinationFromMap?: (callback: (location: Location, name: string) => void) => void;
   recentMapClick?: { location: Location; name: string } | null;
   onSetRouteMarkers?: (start: {location: Location; name: string} | null, end: {location: Location; name: string} | null) => void;
+  onSetRouteMarkerDragHandler?: (handler: (isStart: boolean, location: Location, name: string) => void) => void;
 }
 
-const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onMapCenter, onSetDestinationFromMap, recentMapClick, onSetRouteMarkers }) => {
+const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onMapCenter, onSetDestinationFromMap, recentMapClick, onSetRouteMarkers, onSetRouteMarkerDragHandler }) => {
   const [startLocation, setStartLocation] = useState<Location | null>(null);
   const [endLocation, setEndLocation] = useState<Location | null>(null);
   const [startName, setStartName] = useState('');
@@ -210,22 +212,73 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
     }
   };
 
+  const handleRouteMarkerDragFromApp = useCallback((isStart: boolean, location: Location, name: string) => {
+    if (isStart) {
+      setStartLocation(location);
+      setStartName(name);
+      addToClipboard(location, name);
+      if (onSetRouteMarkers) {
+        onSetRouteMarkers({ location, name }, endLocationRef.current && endName ? { location: endLocationRef.current, name: endName } : null);
+      }
+      if (calculateRouteIfReadyRef.current) {
+        calculateRouteIfReadyRef.current(location, endLocationRef.current);
+      }
+    } else {
+      setEndLocation(location);
+      setEndName(name);
+      addToClipboard(location, name);
+      if (onSetRouteMarkers) {
+        onSetRouteMarkers(startLocationRef.current && startName ? { location: startLocationRef.current, name: startName } : null, { location, name });
+      }
+      if (calculateRouteIfReadyRef.current) {
+        calculateRouteIfReadyRef.current(startLocationRef.current, location);
+      }
+    }
+  }, [endName, startName, onSetRouteMarkers, addToClipboard]);
+
+  // Register the drag handler with the parent component
+  useEffect(() => {
+    if (onSetRouteMarkerDragHandler) {
+      onSetRouteMarkerDragHandler(handleRouteMarkerDragFromApp);
+    }
+  }, [onSetRouteMarkerDragHandler, handleRouteMarkerDragFromApp]);
+
   const getCurrentLocation = useCallback(() => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (position) => {
+        async (position) => {
           const location = {
             lat: position.coords.latitude,
             lng: position.coords.longitude
           };
-          setStartLocation(location);
-          setStartName('Current Location');
-          addToClipboard(location, 'Current Location');
-          if (onSetRouteMarkers) {
-            onSetRouteMarkers({ location, name: 'Current Location' }, endLocationRef.current && endName ? { location: endLocationRef.current, name: endName } : null);
-          }
-          if (calculateRouteIfReadyRef.current) {
-            calculateRouteIfReadyRef.current(location, endLocationRef.current);
+          
+          try {
+            // Try to get a proper address for the current location
+            const address = await reverseGeocode(location.lat, location.lng);
+            setStartLocation(location);
+            setStartName(address);
+            addToClipboard(location, address);
+            
+            if (onSetRouteMarkers) {
+              onSetRouteMarkers({ location, name: address }, endLocationRef.current && endName ? { location: endLocationRef.current, name: endName } : null);
+            }
+            if (calculateRouteIfReadyRef.current) {
+              calculateRouteIfReadyRef.current(location, endLocationRef.current);
+            }
+          } catch (error) {
+            console.error('Failed to reverse geocode current location:', error);
+            // Fallback to coordinates if reverse geocoding fails
+            const coordinateString = `${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}`;
+            setStartLocation(location);
+            setStartName(coordinateString);
+            addToClipboard(location, coordinateString);
+            
+            if (onSetRouteMarkers) {
+              onSetRouteMarkers({ location, name: coordinateString }, endLocationRef.current && endName ? { location: endLocationRef.current, name: endName } : null);
+            }
+            if (calculateRouteIfReadyRef.current) {
+              calculateRouteIfReadyRef.current(location, endLocationRef.current);
+            }
           }
         },
         (error) => {

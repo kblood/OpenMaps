@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Polyline } from 'react-leaflet';
 import { LatLngExpression, Map as LeafletMap } from 'leaflet';
 import { Location, Marker as MarkerType, Route } from '../../types';
@@ -6,8 +6,6 @@ import 'leaflet/dist/leaflet.css';
 
 // Fix for default markers in react-leaflet
 import L from 'leaflet';
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
 let DefaultIcon = L.divIcon({
   html: `<svg width="25" height="41" viewBox="0 0 25 41" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -51,44 +49,6 @@ interface MapProps {
   onContextMenu?: (location: Location) => void;
 }
 
-interface ContextMenuProps {
-  position: { x: number; y: number } | null;
-  location: Location | null;
-  onSetStart: (location: Location) => void;
-  onSetEnd: (location: Location) => void;
-  onClose: () => void;
-}
-
-const ContextMenu: React.FC<ContextMenuProps> = ({ position, location, onSetStart, onSetEnd, onClose }) => {
-  if (!position || !location) return null;
-  
-  return (
-    <div 
-      className="absolute bg-white shadow-lg rounded-md border border-gray-200 py-1 z-[2000]"
-      style={{ left: position.x, top: position.y }}
-    >
-      <button
-        onClick={() => {
-          onSetStart(location);
-          onClose();
-        }}
-        className="w-full px-4 py-2 text-left hover:bg-gray-100 text-sm"
-      >
-        Set as start point
-      </button>
-      <button
-        onClick={() => {
-          onSetEnd(location);
-          onClose();
-        }}
-        className="w-full px-4 py-2 text-left hover:bg-gray-100 text-sm"
-      >
-        Set as destination
-      </button>
-    </div>
-  );
-};
-
 function MapEventHandler({ onMapClick, onContextMenu }: { onMapClick: (location: Location) => void; onContextMenu?: (location: Location) => void }) {
   useMapEvents({
     click: (e) => {
@@ -100,6 +60,30 @@ function MapEventHandler({ onMapClick, onContextMenu }: { onMapClick: (location:
       }
     }
   });
+  return null;
+}
+
+function MapReadyHandler({ onMapReady }: { onMapReady: (map: LeafletMap) => void }) {
+  const map = useMapEvents({});
+  
+  useEffect(() => {
+    if (map) {
+      onMapReady(map);
+    }
+  }, [map, onMapReady]);
+  
+  return null;
+}
+
+function MapCenterHandler({ center, zoom }: { center: Location; zoom: number }) {
+  const map = useMapEvents({});
+  
+  useEffect(() => {
+    if (map) {
+      map.setView([center.lat, center.lng], zoom);
+    }
+  }, [map, center.lat, center.lng, zoom]);
+  
   return null;
 }
 
@@ -115,9 +99,6 @@ const MapComponent: React.FC<MapProps> = ({
   onRouteMarkerDrag,
   onContextMenu
 }) => {
-  const mapRef = useRef<LeafletMap>(null);
-  const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; location: Location } | null>(null);
-
   const handleContextMenu = (location: Location) => {
     if (onContextMenu) {
       onContextMenu(location);
@@ -125,12 +106,6 @@ const MapComponent: React.FC<MapProps> = ({
     // For now, we'll handle context menu locally since we need screen coordinates
     // In a real implementation, you'd need to convert map coordinates to screen coordinates
   };
-
-  useEffect(() => {
-    if (mapRef.current) {
-      onMapReady(mapRef.current);
-    }
-  }, [onMapReady]);
 
   const routeCoordinates: LatLngExpression[] = route 
     ? route.geometry.coordinates.map(coord => [coord[1], coord[0]] as LatLngExpression)
@@ -141,7 +116,6 @@ const MapComponent: React.FC<MapProps> = ({
       center={[center.lat, center.lng]}
       zoom={zoom}
       style={{ height: '100vh', width: '100%' }}
-      ref={mapRef}
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -149,6 +123,8 @@ const MapComponent: React.FC<MapProps> = ({
       />
       
       <MapEventHandler onMapClick={onMapClick} onContextMenu={handleContextMenu} />
+      <MapReadyHandler onMapReady={onMapReady} />
+      <MapCenterHandler center={center} zoom={zoom} />
       
       {/* Route Start Marker */}
       {routeStartMarker && (
