@@ -223,6 +223,64 @@ const GlobalMapManager: React.FC<Props> = ({
     }
   };
 
+  const handleDownloadCurrentLevel = async () => {
+    if (!navigationState) return;
+    
+    try {
+      if (navigationState.currentLevel === 'world') {
+        const confirmDownload = confirm(
+          `⚠️ Download Everything?\n\n` +
+          `This will download the entire world map including all continents, countries, states, and major cities.\n\n` +
+          `Estimated size: ~20GB\n` +
+          `This may take several hours and use significant bandwidth.\n\n` +
+          `Continue?`
+        );
+        
+        if (confirmDownload) {
+          await globalMapPackSystem.downloadNode('world');
+        }
+      } else {
+        const confirmDownload = confirm(
+          `Download ${navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1]?.name || navigationState.currentLevel}?\n\n` +
+          `This will download all sub-regions, cities, and detailed maps for this ${navigationState.currentLevel}.\n\n` +
+          `Continue?`
+        );
+        
+        if (confirmDownload) {
+          await globalMapPackSystem.downloadNode(navigationState.currentNodeId);
+        }
+      }
+    } catch (error) {
+      console.error('Level download failed:', error);
+      alert('Download failed. Please try again.');
+    }
+  };
+
+  const handleLoadMoreCities = async () => {
+    if (!navigationState) return;
+    
+    try {
+      // In a real implementation, this would load additional cities from an API
+      // For now, we'll show a placeholder message
+      alert(
+        `🏙️ Loading More Cities\n\n` +
+        `This feature would load additional cities and metropolitan areas for ${navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1]?.name || 'this region'}.\n\n` +
+        `In the full implementation, this would:\n` +
+        `• Load cities with 100K+ population\n` +
+        `• Include suburban areas and districts\n` +
+        `• Add transportation hubs and landmarks\n\n` +
+        `Currently showing preloaded major cities only.`
+      );
+      
+      // TODO: Implement actual city loading from external API or expanded dataset
+      // await globalMapPackSystem.loadAdditionalCities(navigationState.currentNodeId);
+      
+    } catch (error) {
+      console.error('Failed to load more cities:', error);
+      alert('Failed to load additional cities. Please try again.');
+    }
+  };
+
   const handleDownloadAction = async (nodeId: string, currentStatus: string) => {
     if (currentStatus === 'downloading') {
       // Show pause/cancel options
@@ -281,27 +339,61 @@ const GlobalMapManager: React.FC<Props> = ({
   };
 
   const renderLevelSelector = () => (
-    <div className="mb-4">
-      <label className="block text-sm font-medium text-gray-700 mb-2">
-        Quick Navigation:
-      </label>
-      <select
-        value={selectedLevelFilter}
-        onChange={(e) => {
-          setSelectedLevelFilter(e.target.value);
-          if (e.target.value !== 'all') {
-            handleLevelNavigation(e.target.value);
-          }
-        }}
-        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-      >
-        <option value="all">All Levels</option>
-        {HIERARCHY_LEVELS.map(level => (
-          <option key={level.id} value={level.id}>
-            {level.icon} {level.name}
-          </option>
+    <div className="mb-6">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="font-medium">Navigation Level</h4>
+        <div className="text-xs text-gray-500">
+          Current: {navigationState?.currentLevel} • {navigationState?.children.length || 0} items
+        </div>
+      </div>
+      
+      {/* Hierarchy Breadcrumb Style */}
+      <div className="flex items-center space-x-2 mb-3 flex-wrap">
+        <button
+          onClick={() => globalMapPackSystem.navigateToLevel('world')}
+          className={`px-3 py-2 rounded text-sm font-medium ${
+            navigationState?.currentLevel === 'world'
+              ? 'bg-blue-500 text-white'
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}
+        >
+          🌍 World
+        </button>
+        
+        {navigationState?.breadcrumbs.map((crumb, index) => (
+          <React.Fragment key={crumb.id}>
+            <span className="text-gray-400">→</span>
+            <button
+              onClick={() => globalMapPackSystem.navigateToNode(crumb.id)}
+              className="px-3 py-2 bg-gray-100 text-gray-700 rounded text-sm hover:bg-gray-200"
+            >
+              {HIERARCHY_LEVELS.find(l => l.id === crumb.level)?.icon} {crumb.name}
+            </button>
+          </React.Fragment>
         ))}
-      </select>
+      </div>
+      
+      {/* Quick Level Navigation */}
+      <div className="flex flex-wrap gap-2">
+        {HIERARCHY_LEVELS.map(level => {
+          const count = globalMapPackSystem.getGlobalNodes().filter(n => n.level === level.id).length;
+          return (
+            <button
+              key={level.id}
+              onClick={() => globalMapPackSystem.navigateToLevel(level.id)}
+              className={`px-3 py-1 rounded text-sm border flex items-center space-x-1 ${
+                navigationState?.currentLevel === level.id
+                  ? 'bg-blue-500 text-white border-blue-500'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              <span>{level.icon}</span>
+              <span>{level.name}</span>
+              <span className="text-xs opacity-75">({count})</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 
@@ -583,14 +675,56 @@ const GlobalMapManager: React.FC<Props> = ({
                   </div>
                 ) : (
                   <div>
-                    <h3 className="font-semibold text-lg mb-3">
-                      {navigationState?.breadcrumbs.length ? 
-                        navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1].name : 
-                        'World'
-                      } ({navigationState?.children.length || 0})
-                    </h3>
+                    {/* Current Level Header with Download Option */}
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-semibold text-lg">
+                        {navigationState?.breadcrumbs.length ? 
+                          navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1].name : 
+                          'World'
+                        } ({navigationState?.children.length || 0})
+                      </h3>
+                      
+                      {/* Download Current Level Button */}
+                      {navigationState && (
+                        <div className="flex items-center space-x-2">
+                          {navigationState.currentLevel !== 'section' && (
+                            <button
+                              onClick={() => handleDownloadCurrentLevel()}
+                              className="px-4 py-2 bg-purple-500 text-white rounded text-sm hover:bg-purple-600 flex items-center space-x-2"
+                            >
+                              <span>⬇️</span>
+                              <span>Download {navigationState.currentLevel === 'world' ? 'Everything' : 
+                                           navigationState.currentLevel === 'continent' ? 'Continent' :
+                                           navigationState.currentLevel === 'country' ? 'Country' :
+                                           navigationState.currentLevel === 'state' ? 'State/Region' :
+                                           'Level'}</span>
+                            </button>
+                          )}
+                          
+                          {(navigationState.currentLevel === 'country' || navigationState.currentLevel === 'state') && (
+                            <button
+                              onClick={() => handleLoadMoreCities()}
+                              className="px-3 py-2 bg-blue-500 text-white rounded text-sm hover:bg-blue-600"
+                            >
+                              + Load Cities
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    
                     {navigationState?.children.length === 0 ? (
-                      <p className="text-gray-500">No child locations available</p>
+                      <div className="text-center py-8">
+                        <p className="text-gray-500 mb-4">No child locations available at this level</p>
+                        {(navigationState.currentLevel === 'state' || navigationState.currentLevel === 'city') && (
+                          <button
+                            onClick={() => handleLoadMoreCities()}
+                            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                          >
+                            🏙️ Load Cities for {navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1]?.name || 'this area'}
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       navigationState?.children.map(renderNodeCard)
                     )}
