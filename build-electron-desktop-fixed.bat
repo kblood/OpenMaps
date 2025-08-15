@@ -33,7 +33,8 @@ echo.
 
 REM Check if Node.js is installed
 echo [1/8] Checking prerequisites...
-node --version >nul 2>&1
+echo Checking Node.js installation...
+node --version 2>nul
 if %errorlevel% neq 0 (
     echo.
     echo ERROR: Node.js is not installed or not in PATH
@@ -46,7 +47,8 @@ if %errorlevel% neq 0 (
 )
 
 REM Check if npm is installed
-npm --version >nul 2>&1
+echo Checking npm installation...
+npm --version 2>nul
 if %errorlevel% neq 0 (
     echo.
     echo ERROR: npm is not installed or not in PATH

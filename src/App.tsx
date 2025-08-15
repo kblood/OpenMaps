@@ -4,10 +4,13 @@ import MapContainer from './components/Map/MapContainer';
 import SearchBar from './components/Search/SearchBar';
 import RoutePanel from './components/Routing/RoutePanel';
 import MapControls from './components/UI/MapControls';
+import GlobalMapManager from './components/GlobalMapManager';
+import { globalMapPackSystem } from './services/globalMapPackSystem';
+import { MapPackDebugger } from './components/MapPackDebugger';
 import { useGeolocation } from './hooks/useGeolocation';
 import { Location, Marker, Route } from './types';
 import { reverseGeocode } from './services/geocoding';
-import { DEFAULT_LAYER, getMapLayer } from './config/mapLayers';
+import { DEFAULT_LAYER, getAvailableLayers } from './config/mapLayers';
 
 const DEFAULT_CENTER: Location = { lat: 40.7128, lng: -74.0060 }; // New York City
 const DEFAULT_ZOOM = 13;
@@ -60,6 +63,7 @@ function App() {
   const [currentMapLayer, setCurrentMapLayer] = useState(getLastMapLayer());
   const [map, setMap] = useState<LeafletMap | null>(null);
   const [recentMapClick, setRecentMapClick] = useState<{location: Location; name: string} | null>(null);
+  const [showMapPacks, setShowMapPacks] = useState(false);
   const routePanelMapClickCallbackRef = useRef<((location: Location, name: string) => void) | null>(null);
   const [routeStartMarker, setRouteStartMarker] = useState<{location: Location; name: string} | null>(null);
   const [routeEndMarker, setRouteEndMarker] = useState<{location: Location; name: string} | null>(null);
@@ -173,6 +177,21 @@ function App() {
   const handleMapReady = useCallback((mapInstance: LeafletMap) => {
     console.log('App: Map instance ready:', mapInstance);
     setMap(mapInstance);
+    
+    // Initialize global map pack system
+    globalMapPackSystem.initialize().catch(console.error);
+    
+    // Track initial view
+    const center = mapInstance.getCenter();
+    const zoom = mapInstance.getZoom();
+    console.log('🗺️ Initial map view tracked:', { center, zoom });
+    
+    // Track map movements for visited areas
+    mapInstance.on('moveend', () => {
+      const newCenter = mapInstance.getCenter();
+      const newZoom = mapInstance.getZoom();
+      console.log('🗺️ Map view changed:', { center: newCenter, zoom: newZoom });
+    });
   }, []);
 
   // Update map center when user location is found
@@ -257,11 +276,12 @@ function App() {
   };
 
   const handleMapLayerChange = useCallback(() => {
-    // Cycle through available map layers
-    const layers = ['standard', 'satellite', 'terrain', 'dark', 'humanitarian', 'cycling'];
-    const currentIndex = layers.indexOf(currentMapLayer);
-    const nextIndex = (currentIndex + 1) % layers.length;
-    const nextLayer = layers[nextIndex];
+    // Cycle through available map layers from map packs
+    const availableLayers = getAvailableLayers();
+    const layerIds = availableLayers.map(layer => layer.id);
+    const currentIndex = layerIds.indexOf(currentMapLayer);
+    const nextIndex = (currentIndex + 1) % layerIds.length;
+    const nextLayer = layerIds[nextIndex];
     
     setCurrentMapLayer(nextLayer);
     
@@ -282,6 +302,7 @@ function App() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden">
+      <MapPackDebugger />
       <MapContainer
         center={mapCenter}
         zoom={zoom}
@@ -335,6 +356,7 @@ function App() {
           showDirections={showDirections}
           showSearch={showSearch}
           isLocating={locating}
+          onShowMapPacks={() => setShowMapPacks(true)}
         />
       </div>
 
@@ -343,6 +365,13 @@ function App() {
         <h1 className="text-lg font-bold text-gray-900">OpenMaps</h1>
         <p className="text-xs text-gray-600">Open Source Maps</p>
       </div>
+
+      {/* Global Map Pack Manager */}
+      <GlobalMapManager
+        isOpen={showMapPacks}
+        onClose={() => setShowMapPacks(false)}
+        mapInstance={map || undefined}
+      />
     </div>
   );
 }

@@ -1,14 +1,16 @@
-# OpenMaps Development Guide
+# OpenMaps Development Guide - Global Hierarchical Map Pack System
 
 ## Table of Contents
 - [Getting Started](#getting-started)
+- [Global Map Pack System](#global-map-pack-system)
 - [Development Environment](#development-environment)
-- [Code Style Guidelines](#code-style-guidelines)
+- [Architecture Overview](#architecture-overview)
 - [Component Development](#component-development)
 - [API Development](#api-development)
+- [Offline System Development](#offline-system-development)
 - [Testing](#testing)
 - [Debugging](#debugging)
-- [Performance](#performance)
+- [Performance Optimization](#performance-optimization)
 - [Deployment](#deployment)
 - [Contributing](#contributing)
 
@@ -16,25 +18,26 @@
 
 ### Prerequisites
 - **Node.js** 18.0 or higher
-- **npm** 9.0 or higher
+- **npm** 9.0 or higher  
 - **Git** 2.30 or higher
+- **Modern Browser** with IndexedDB support
 - **Docker** (optional, for containerized development)
-- **Redis** (for caching, can use Docker)
+- **Redis** (for backend caching, can use Docker)
 
 ### Initial Setup
 
 1. **Clone the repository**
    ```bash
    git clone <repository-url>
-   cd openmaps
+   cd OpenMaps
    ```
 
 2. **Install dependencies**
    ```bash
-   # Frontend dependencies
+   # Frontend dependencies (includes global map pack system)
    npm install
    
-   # Backend dependencies
+   # Backend dependencies (routing and geocoding APIs)
    cd backend
    npm install
    cd ..
@@ -45,15 +48,331 @@
    # Copy environment template
    cp backend/.env.example backend/.env
    
-   # Edit environment variables
-   # Add your API keys and configuration
+   # Frontend environment (optional)
+   echo "VITE_FORCE_OFFLINE_ROUTING=true" > .env.local
    ```
+
+4. **Start Development Servers**
+   ```bash
+   # Frontend (with global map pack system)
+   npm run dev
+   
+   # Backend (in separate terminal)
+   cd backend && npm run dev
+   ```
+
+## Global Map Pack System
+
+### Overview
+The Global Map Pack System is the core feature that provides hierarchical offline map management:
+
+- **7-Level Hierarchy**: World → Continents → Countries → States → Cities → Sections → Custom
+- **20x Parallel Downloads**: Dramatically faster tile downloading
+- **Smart Tile Deduplication**: Hierarchical areas share common tiles
+- **Polygon Drawing**: Interactive custom area creation
+- **Offline-First**: Works without internet for preloaded areas
+
+### Key Components
+
+#### 1. Global Hierarchy Data (`src/data/globalMapHierarchy.ts`)
+```typescript
+// Preloaded world structure with 500+ locations
+export const GLOBAL_HIERARCHY: GlobalMapNode[] = [
+  {
+    id: 'world',
+    name: 'World',
+    level: 'world',
+    children: ['north_america', 'europe', 'asia', ...],
+    estimatedTiles: 1000000,
+    estimatedSizeMB: 20000,
+    // ... detailed configuration
+  }
+  // ... extensive hierarchy data
+];
+```
+
+#### 2. Global Map Pack System (`src/services/globalMapPackSystem.ts`)
+```typescript
+// Core system managing downloads, navigation, and storage
+export class GlobalMapPackSystem {
+  // Navigation through hierarchy
+  navigateToNode(nodeId: string): void
+  
+  // Search across global locations  
+  searchGlobal(query: string): void
+  
+  // Download hierarchical areas
+  async downloadNode(nodeId: string): Promise<void>
+  
+  // Create custom polygon-based packs
+  async createCustomPack(name: string, polygon: [number, number][]): Promise<string>
+}
+```
+
+#### 3. Global Map Manager UI (`src/components/GlobalMapManager.tsx`)
+```typescript
+// 4-tab interface for hierarchy navigation and custom pack creation
+const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => {
+  // Tabs: World Hierarchy, Custom Packs, Polygon Drawing, Downloads
+  const [activeTab, setActiveTab] = useState<'hierarchy' | 'custom' | 'polygon' | 'downloads'>('hierarchy');
+  
+  // Interactive polygon drawing for custom areas
+  const startPolygonDrawing = () => { /* ... */ };
+  
+  // Hierarchical navigation with breadcrumbs
+  const handleNodeNavigation = (nodeId: string) => { /* ... */ };
+}
+```
+
+### Development Workflow
+
+#### Adding New Hierarchy Regions
+1. **Extend Global Hierarchy** (`src/data/globalMapHierarchy.ts`):
+   ```typescript
+   {
+     id: 'new_region',
+     name: 'New Region',
+     level: 'region',
+     parentId: 'parent_country',
+     bounds: { north: 45.0, south: 40.0, east: 10.0, west: 5.0 },
+     center: { lat: 42.5, lng: 7.5 },
+     estimatedTiles: 5000,
+     estimatedSizeMB: 100,
+     isPreloaded: true,
+     priority: 4,
+     tags: ['custom', 'region']
+   }
+   ```
+
+2. **Update Search Index**: The system automatically rebuilds the search index
+3. **Test Navigation**: Verify the new region appears in hierarchy navigation
+4. **Test Downloads**: Ensure tile estimation and downloads work correctly
+
+#### Customizing Download Performance
+```typescript
+// Adjust parallel download settings in globalMapPackSystem.ts
+private maxConcurrentDownloads = 20; // Increase for faster downloads
+
+// Modify tile estimation algorithms
+private estimatePolygonTiles(polygon: [number, number][], zoom: number): number {
+  // Custom polygon-tile intersection logic
+}
+```
+
+#### Adding Custom Map Layers
+```typescript
+// Update mapLayers.ts configuration
+{
+  id: 'custom-satellite',
+  name: 'Custom Satellite',
+  url: 'https://your-tile-server.com/{z}/{x}/{y}.png',
+  attribution: '© Your Data Provider',
+  maxZoom: 18,
+  tileSize: 256
+}
+```
+
+### Architecture Overview
+
+#### Global Map Pack System Architecture
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Frontend (React + TypeScript)        │
+├─────────────────────────────────────────────────────────┤
+│  GlobalMapManager (4-tab UI)                           │
+│  ├── World Hierarchy Tab (navigation & search)         │
+│  ├── Custom Packs Tab (polygon-based areas)            │
+│  ├── Polygon Drawing Tab (interactive map drawing)     │
+│  └── Downloads Tab (progress monitoring)               │
+├─────────────────────────────────────────────────────────┤
+│  GlobalMapPackSystem (core service)                    │
+│  ├── Hierarchical Navigation                           │
+│  ├── Parallel Download Engine (20x faster)             │
+│  ├── Tile Deduplication System                         │
+│  └── Custom Pack Creation                              │
+├─────────────────────────────────────────────────────────┤
+│  IndexedDB Storage                                      │
+│  ├── Tiles (with hierarchical indexing)                │
+│  ├── Global Nodes (hierarchy metadata)                 │
+│  └── Custom Packs (user-created areas)                 │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### Data Flow
+1. **User Navigation**: User navigates hierarchy via dropdown or breadcrumbs
+2. **Search Processing**: Fuzzy search across preloaded global index
+3. **Download Initiation**: User selects area or custom polygon for download
+4. **Parallel Processing**: 20 concurrent tile downloads with progress tracking
+5. **Storage & Indexing**: Tiles stored in IndexedDB with deduplication
+6. **Offline Access**: Downloaded areas available without internet
+
+### Component Development
+
+#### Core Components Structure
+```
+src/components/
+├── GlobalMapManager.tsx          # Main 4-tab interface
+│   ├── Navigation handling       # Hierarchy breadcrumbs and level selector
+│   ├── Search interface         # Global fuzzy search with results
+│   ├── Polygon drawing         # Interactive map-based area creation
+│   └── Download monitoring     # Real-time progress tracking
+├── Map/
+│   ├── MapContainer.tsx        # Enhanced Leaflet map with polygon support
+│   └── PolygonDrawing.tsx      # Click-based polygon creation tools
+├── Search/
+│   ├── SearchBar.tsx           # Global search with GPS coordinate support
+│   └── RecentLocations.tsx     # Recent locations dropdown
+└── Routing/
+    ├── RoutePanel.tsx          # Multi-modal routing interface
+    └── OfflineRouting.tsx      # Mathematical route calculation
+```
+
+#### Developing Custom Components
+
+**1. Creating a New Hierarchy Level Component**
+```typescript
+interface HierarchyLevelProps {
+  level: string;
+  nodes: GlobalMapNode[];
+  onNavigate: (nodeId: string) => void;
+  onDownload: (nodeId: string) => void;
+}
+
+const HierarchyLevel: React.FC<HierarchyLevelProps> = ({ level, nodes, onNavigate, onDownload }) => {
+  return (
+    <div className="hierarchy-level">
+      <h3>{level.charAt(0).toUpperCase() + level.slice(1)}s</h3>
+      {nodes.map(node => (
+        <NodeCard
+          key={node.id}
+          node={node}
+          onNavigate={onNavigate}
+          onDownload={onDownload}
+        />
+      ))}
+    </div>
+  );
+};
+```
+
+**2. Custom Download Progress Component**
+```typescript
+interface DownloadProgressProps {
+  progress: DownloadProgress;
+  onCancel?: (nodeId: string) => void;
+  onRetry?: (nodeId: string) => void;
+}
+
+const DownloadProgress: React.FC<DownloadProgressProps> = ({ progress, onCancel, onRetry }) => {
+  const percentage = (progress.current / progress.total) * 100;
+  
+  return (
+    <div className="download-progress">
+      <div className="progress-header">
+        <span className="node-name">{progress.nodeId}</span>
+        <span className="percentage">{percentage.toFixed(1)}%</span>
+      </div>
+      <div className="progress-bar">
+        <div 
+          className="progress-fill"
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+      <div className="progress-details">
+        <span>Speed: {progress.speed.toFixed(1)} tiles/sec</span>
+        <span>ETA: {Math.round(progress.estimatedTimeRemaining / 60)} min</span>
+      </div>
+    </div>
+  );
+};
+```
+
+### Offline System Development
+
+#### Working with IndexedDB Storage
+```typescript
+// Accessing the global map pack system
+import { globalMapPackSystem } from '../services/globalMapPackSystem';
+
+// Initialize the system
+await globalMapPackSystem.initialize();
+
+// Subscribe to download progress
+const unsubscribe = globalMapPackSystem.onDownloadProgress((progress) => {
+  console.log(`Download progress: ${progress.current}/${progress.total}`);
+});
+
+// Subscribe to navigation changes
+const unsubscribeNav = globalMapPackSystem.onNavigationChange((state) => {
+  console.log(`Current level: ${state.currentLevel}, Node: ${state.currentNodeId}`);
+});
+```
+
+#### Custom Tile Processing
+```typescript
+// Extending the tile download system
+class CustomTileProcessor {
+  async processTile(tile: TileInfo): Promise<ProcessedTile> {
+    // Custom tile processing logic
+    const processed = await this.enhanceTile(tile);
+    return {
+      ...tile,
+      processed: true,
+      enhancedData: processed
+    };
+  }
+  
+  private async enhanceTile(tile: TileInfo): Promise<any> {
+    // Add custom tile enhancement logic
+    // e.g., compression, watermarking, format conversion
+  }
+}
+```
+
+#### Custom Polygon Algorithms
+```typescript
+// Implementing precise polygon-tile intersection
+function calculatePolygonTileIntersection(
+  polygon: [number, number][],
+  zoom: number
+): TileInfo[] {
+  const tiles: TileInfo[] = [];
+  
+  // Convert polygon to tile grid coordinates
+  const tilePolygon = polygon.map(([lat, lng]) => {
+    const x = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
+    const y = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom));
+    return [x, y];
+  });
+  
+  // Find tiles that intersect with polygon
+  const bounds = this.getPolygonBounds(tilePolygon);
+  
+  for (let x = bounds.minX; x <= bounds.maxX; x++) {
+    for (let y = bounds.minY; y <= bounds.maxY; y++) {
+      if (this.tileIntersectsPolygon(x, y, tilePolygon)) {
+        tiles.push({
+          x, y, z: zoom,
+          url: `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`,
+          layerId: 'openstreetmap',
+          downloaded: false,
+          priority: 15 - zoom,
+          nodeIds: [],
+          customPackIds: []
+        });
+      }
+    }
+  }
+  
+  return tiles;
+}
+```
 
 4. **Start development servers**
    ```bash
    # Option 1: Manual start
-   npm run dev          # Frontend (http://localhost:3000)
-   cd backend && npm run dev  # Backend (http://localhost:3001)
+   npm run dev          # Frontend with Global Map Pack System (http://localhost:3000)
+   cd backend && npm run dev  # Backend API services (http://localhost:3001)
    
    # Option 2: Docker
    docker-compose up --build

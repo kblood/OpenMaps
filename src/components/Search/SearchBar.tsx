@@ -28,7 +28,7 @@ const SearchBar: React.FC<SearchBarProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
-  const debounceRef = useRef<number>();
+  const debounceRef = useRef<NodeJS.Timeout>();
   const searchRef = useRef<HTMLDivElement>(null);
 
   // Use clipboard directly - debug code removed

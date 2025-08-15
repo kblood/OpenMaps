@@ -6,7 +6,8 @@ import {
   Navigation, 
   Layers, 
   Search,
-  Map as MapIcon
+  Map as MapIcon,
+  Package
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -18,6 +19,7 @@ interface MapControlsProps {
   onToggleSearch: () => void;
   onToggleLayers?: () => void;
   onMapLayerChange?: () => void;
+  onShowMapPacks?: () => void;
   showDirections: boolean;
   showSearch: boolean;
   isLocating?: boolean;
@@ -32,6 +34,7 @@ const MapControls: React.FC<MapControlsProps> = ({
   onToggleSearch,
   onToggleLayers,
   onMapLayerChange,
+  onShowMapPacks,
   showDirections,
   showSearch,
   isLocating = false,
@@ -107,6 +110,17 @@ const MapControls: React.FC<MapControlsProps> = ({
           title="Change map layer"
         >
           <MapIcon className="h-5 w-5" />
+        </button>
+      )}
+
+      {/* Map Packs */}
+      {onShowMapPacks && (
+        <button
+          onClick={onShowMapPacks}
+          className={buttonClass}
+          title="Manage map packs"
+        >
+          <Package className="h-5 w-5" />
         </button>
       )}
     </div>

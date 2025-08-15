@@ -1,7 +1,11 @@
 import { Location, Route } from '../types';
 import { RouteMode, RoutePreference, RouteOptions } from '../components/Routing/RoutePanel';
+import { getOfflineRoute, getOfflineRouteAlternatives } from './offlineRouting';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+
+// Debug flag to force offline routing
+const FORCE_OFFLINE_ROUTING = true;
 
 export const getRoute = async (
   start: Location, 
@@ -10,7 +14,24 @@ export const getRoute = async (
   preference: RoutePreference = 'fastest',
   options: RouteOptions = { avoidHighways: false, avoidTolls: false, avoidFerries: false }
 ): Promise<Route | null> => {
+  console.log('getRoute called with:', { start, end, mode, preference, options });
+  
+  // Force offline routing for testing
+  if (FORCE_OFFLINE_ROUTING) {
+    console.log('FORCE_OFFLINE_ROUTING is enabled, using offline routing directly');
+    try {
+      const offlineRoute = getOfflineRoute(start, end, mode, preference, options);
+      console.log('Offline routing successful:', offlineRoute);
+      return offlineRoute;
+    } catch (offlineError) {
+      console.error('Offline routing failed:', offlineError);
+      return null;
+    }
+  }
+  
+  // First try online routing
   try {
+    console.log('Attempting online routing...');
     const params = new URLSearchParams({
       start: `${start.lat},${start.lng}`,
       end: `${end.lat},${end.lng}`,
@@ -22,21 +43,34 @@ export const getRoute = async (
     });
     
     const response = await fetch(`${API_BASE_URL}/routing/directions?${params}`);
+    console.log('Online routing response status:', response.status);
     
     if (!response.ok) {
       throw new Error('Routing request failed');
     }
     
     const data = await response.json();
+    console.log('Online routing data:', data);
     
     if (data.route) {
+      console.log('Online routing successful');
       return data.route;
     }
     
-    return null;
+    throw new Error('No route data received');
   } catch (error) {
-    console.error('Routing error:', error);
-    return null;
+    console.warn('Online routing failed, falling back to offline routing:', error);
+    
+    // Fallback to offline routing
+    try {
+      console.log('Attempting offline routing...');
+      const offlineRoute = getOfflineRoute(start, end, mode, preference, options);
+      console.log('Offline routing successful:', offlineRoute);
+      return offlineRoute;
+    } catch (offlineError) {
+      console.error('Offline routing also failed:', offlineError);
+      return null;
+    }
   }
 };
 
@@ -53,6 +87,7 @@ export const getRouteAlternatives = async (
   mode: RouteMode = 'driving',
   options: RouteOptions = { avoidHighways: false, avoidTolls: false, avoidFerries: false }
 ): Promise<Route[]> => {
+  // First try online routing
   try {
     const params = new URLSearchParams({
       start: `${start.lat},${start.lng}`,
@@ -73,8 +108,17 @@ export const getRouteAlternatives = async (
     const data = await response.json();
     return data.routes || [];
   } catch (error) {
-    console.error('Alternative routes error:', error);
-    return [];
+    console.warn('Online alternative routes failed, falling back to offline routing:', error);
+    
+    // Fallback to offline routing
+    try {
+      const offlineRoutes = getOfflineRouteAlternatives(start, end, mode, options);
+      console.log('Using offline alternative routes');
+      return offlineRoutes;
+    } catch (offlineError) {
+      console.error('Offline alternative routes also failed:', offlineError);
+      return [];
+    }
   }
 };
 

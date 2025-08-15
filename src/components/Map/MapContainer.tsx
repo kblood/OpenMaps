@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Polyline } from 'react-leaflet';
 import { LatLngExpression, Map as LeafletMap } from 'leaflet';
-import { Location, Marker as MarkerType, Route, MapTileLayer } from '../../types';
+import { Location, Marker as MarkerType, Route } from '../../types';
 import { getMapLayer } from '../../config/mapLayers';
 import 'leaflet/dist/leaflet.css';
 

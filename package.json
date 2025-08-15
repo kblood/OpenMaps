@@ -22,13 +22,13 @@
     "build:all": "npm run build && echo 'Standard build complete. See DEPLOYMENT.md for standalone app builds.'"
   },
   "dependencies": {
+    "@types/leaflet": "^1.9.8",
+    "clsx": "^2.0.0",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^0.263.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "leaflet": "^1.9.4",
-    "react-leaflet": "^4.2.1",
-    "@types/leaflet": "^1.9.8",
-    "lucide-react": "^0.263.1",
-    "clsx": "^2.0.0"
+    "react-leaflet": "^4.2.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.15",
@@ -36,21 +36,23 @@
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "@vitejs/plugin-react": "^4.0.3",
+    "autoprefixer": "^10.4.14",
+    "cross-env": "^7.0.3",
+    "electron": "^22.3.27",
+    "electron-builder": "^24.13.3",
     "eslint": "^8.45.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.3",
-    "typescript": "^5.0.2",
-    "vite": "^4.4.5",
-    "tailwindcss": "^3.3.0",
-    "autoprefixer": "^10.4.14",
     "postcss": "^8.4.27",
-    "electron": "^22.0.0",
-    "electron-builder": "^24.0.0",
-    "cross-env": "^7.0.3"
+    "tailwindcss": "^3.3.0",
+    "typescript": "^5.0.2",
+    "vite": "^4.4.5"
   },
   "build": {
     "appId": "com.openmaps.app",
     "productName": "OpenMaps",
+    "copyright": "Copyright © 2025 OpenMaps Team",
+    "buildVersion": "1.0.0",
     "directories": {
       "output": "release/OpenMaps-Desktop-v${version}"
     },
@@ -59,52 +61,68 @@
       "backend/dist/**/*",
       "backend/package.json",
       "electron/**/*",
-      "public/icons/**/*"
+      "public/icons/**/*",
+      "!**/*.map",
+      "!**/node_modules/**/*"
     ],
-    "extraFiles": [
+    "extraResources": [
       {
-        "from": "backend/node_modules",
-        "to": "backend/node_modules",
-        "filter": ["**/*"]
+        "from": "public/icons",
+        "to": "icons"
       }
     ],
     "win": {
       "target": [
         {
-          "target": "nsis",
-          "arch": ["x64"]
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
         },
         {
-          "target": "portable",
-          "arch": ["x64"]
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "icon": "public/icons/icon-512.png",
-      "publisherName": "OpenMaps Team"
+      "icon": "public/icons/icon-256.png",
+      "publisherName": "OpenMaps Team",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "requestedExecutionLevel": "asInvoker"
     },
     "mac": {
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "icon": "public/icons/icon-512.png",
-      "category": "public.app-category.navigation"
+      "category": "public.app-category.navigation",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "linux": {
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "deb",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "public/icons/icon-512.png",
-      "category": "Office"
+      "category": "Office",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -112,7 +130,25 @@
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
+      "createStartMenuShortcut": true,
+      "shortcutName": "OpenMaps",
+      "installerIcon": "public/icons/icon-256.png",
+      "uninstallerIcon": "public/icons/icon-256.png",
+      "installerHeaderIcon": "public/icons/icon-256.png",
+      "installerSidebar": null,
+      "uninstallerSidebar": null,
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "license": "LICENSE",
+      "warningsAsErrors": false,
+      "displayLanguageSelector": false,
+      "installerLanguages": ["en_US"],
+      "include": null
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}.${ext}"
+    },
+    "compression": "normal",
+    "nodeGypRebuild": false,
+    "npmRebuild": false
   }
 }
