@@ -40,16 +40,17 @@ function createWindow() {
     ? 'http://localhost:3000' 
     : `file://${path.join(__dirname, '../dist/index.html')}`;
 
+  console.log('Loading URL:', startUrl);
+  console.log('__dirname:', __dirname);
+  console.log('File exists:', require('fs').existsSync(path.join(__dirname, '../dist/index.html')));
   mainWindow.loadURL(startUrl);
 
   // Show window when ready to prevent visual flash
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     
-    // Focus on window
-    if (isDev) {
-      mainWindow.webContents.openDevTools();
-    }
+    // Focus on window and open dev tools for debugging
+    mainWindow.webContents.openDevTools();
   });
 
   // Handle external links
@@ -79,7 +80,9 @@ function startBackendServer() {
   
   if (!isDev) {
     // Start the backend server for production builds
-    const backendPath = path.join(__dirname, '../backend/dist/server.js');
+    const backendPath = path.join(__dirname, 'backend/dist/server.js');
+    
+    console.log('Starting backend server at:', backendPath);
     
     backendProcess = spawn('node', [backendPath], {
       stdio: 'inherit',
@@ -87,12 +90,17 @@ function startBackendServer() {
         ...process.env,
         PORT: '3001',
         NODE_ENV: 'production'
-      }
+      },
+      cwd: path.join(__dirname, 'backend')
     });
     
     backendProcess.on('error', (err) => {
       console.error('Failed to start backend server:', err);
       dialog.showErrorBox('Backend Error', 'Failed to start the backend server. Some features may not work properly.');
+    });
+    
+    backendProcess.on('exit', (code) => {
+      console.log('Backend server exited with code:', code);
     });
   }
 }
