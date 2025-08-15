@@ -43,3 +43,14 @@ export interface Marker {
   title: string;
   description?: string;
 }
+
+export interface MapTileLayer {
+  id: string;
+  name: string;
+  url: string;
+  attribution: string;
+  maxZoom: number;
+  description?: string;
+}
+
+export type MapLayerType = 'standard' | 'satellite' | 'terrain' | 'dark' | 'humanitarian' | 'cycling' | 'transport';

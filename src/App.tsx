@@ -7,17 +7,57 @@ import MapControls from './components/UI/MapControls';
 import { useGeolocation } from './hooks/useGeolocation';
 import { Location, Marker, Route } from './types';
 import { reverseGeocode } from './services/geocoding';
+import { DEFAULT_LAYER, getMapLayer } from './config/mapLayers';
 
 const DEFAULT_CENTER: Location = { lat: 40.7128, lng: -74.0060 }; // New York City
 const DEFAULT_ZOOM = 13;
 
+// Load last map position from localStorage
+const getLastMapPosition = (): { center: Location; zoom: number } => {
+  try {
+    const saved = localStorage.getItem('openmaps_last_position');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        center: parsed.center || DEFAULT_CENTER,
+        zoom: parsed.zoom || DEFAULT_ZOOM
+      };
+    }
+  } catch (error) {
+    console.warn('Failed to load last map position:', error);
+  }
+  return { center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM };
+};
+
+// Save map position to localStorage
+const saveMapPosition = (center: Location, zoom: number) => {
+  try {
+    localStorage.setItem('openmaps_last_position', JSON.stringify({ center, zoom }));
+  } catch (error) {
+    console.warn('Failed to save map position:', error);
+  }
+};
+
+// Load last map layer from localStorage
+const getLastMapLayer = (): string => {
+  try {
+    const saved = localStorage.getItem('openmaps_layer');
+    return saved || DEFAULT_LAYER;
+  } catch (error) {
+    console.warn('Failed to load map layer preference:', error);
+    return DEFAULT_LAYER;
+  }
+};
+
 function App() {
-  const [mapCenter, setMapCenter] = useState<Location>(DEFAULT_CENTER);
-  const [zoom, setZoom] = useState(DEFAULT_ZOOM);
+  const lastPosition = getLastMapPosition();
+  const [mapCenter, setMapCenter] = useState<Location>(lastPosition.center);
+  const [zoom, setZoom] = useState(lastPosition.zoom);
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [route, setRoute] = useState<Route | null>(null);
   const [showSearch, setShowSearch] = useState(true);
   const [showDirections, setShowDirections] = useState(false);
+  const [currentMapLayer, setCurrentMapLayer] = useState(getLastMapLayer());
   const [map, setMap] = useState<LeafletMap | null>(null);
   const [recentMapClick, setRecentMapClick] = useState<{location: Location; name: string} | null>(null);
   const routePanelMapClickCallbackRef = useRef<((location: Location, name: string) => void) | null>(null);
@@ -32,6 +72,10 @@ function App() {
     console.log('App: map instance available:', !!map);
     setMapCenter(location);
     setZoom(zoomLevel);
+    
+    // Save to localStorage
+    saveMapPosition(location, zoomLevel);
+    
     if (map) {
       console.log('App: Calling map.setView');
       map.setView([location.lat, location.lng], zoomLevel);
@@ -212,6 +256,30 @@ function App() {
     setRoute(null);
   };
 
+  const handleMapLayerChange = useCallback(() => {
+    // Cycle through available map layers
+    const layers = ['standard', 'satellite', 'terrain', 'dark', 'humanitarian', 'cycling'];
+    const currentIndex = layers.indexOf(currentMapLayer);
+    const nextIndex = (currentIndex + 1) % layers.length;
+    const nextLayer = layers[nextIndex];
+    
+    setCurrentMapLayer(nextLayer);
+    
+    // Save to localStorage
+    try {
+      localStorage.setItem('openmaps_layer', nextLayer);
+    } catch (error) {
+      console.warn('Failed to save map layer preference:', error);
+    }
+  }, [currentMapLayer]);
+
+  const handleMapMoveEnd = useCallback((center: Location, zoom: number) => {
+    // Save the new position when user manually moves/zooms the map
+    saveMapPosition(center, zoom);
+    setMapCenter(center);
+    setZoom(zoom);
+  }, []);
+
   return (
     <div className="relative h-screen w-screen overflow-hidden">
       <MapContainer
@@ -224,6 +292,8 @@ function App() {
         onMapClick={handleMapClick}
         onMapReady={handleMapReady}
         onRouteMarkerDrag={handleRouteMarkerDrag}
+        onMapMoveEnd={handleMapMoveEnd}
+        currentLayer={currentMapLayer}
       />
 
       {/* Search Bar */}
@@ -261,6 +331,7 @@ function App() {
           onLocateUser={handleLocateUser}
           onToggleDirections={toggleDirections}
           onToggleSearch={toggleSearch}
+          onMapLayerChange={handleMapLayerChange}
           showDirections={showDirections}
           showSearch={showSearch}
           isLocating={locating}

@@ -17,6 +17,7 @@ interface MapControlsProps {
   onToggleDirections: () => void;
   onToggleSearch: () => void;
   onToggleLayers?: () => void;
+  onMapLayerChange?: () => void;
   showDirections: boolean;
   showSearch: boolean;
   isLocating?: boolean;
@@ -30,6 +31,7 @@ const MapControls: React.FC<MapControlsProps> = ({
   onToggleDirections,
   onToggleSearch,
   onToggleLayers,
+  onMapLayerChange,
   showDirections,
   showSearch,
   isLocating = false,
@@ -98,13 +100,15 @@ const MapControls: React.FC<MapControlsProps> = ({
       )}
 
       {/* Map Type */}
-      <button
-        className={buttonClass}
-        title="Map type"
-        onClick={() => {/* TODO: Implement map type switching */}}
-      >
-        <MapIcon className="h-5 w-5" />
-      </button>
+      {onMapLayerChange && (
+        <button
+          onClick={onMapLayerChange}
+          className={buttonClass}
+          title="Change map layer"
+        >
+          <MapIcon className="h-5 w-5" />
+        </button>
+      )}
     </div>
   );
 };

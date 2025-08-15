@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Polyline } from 'react-leaflet';
 import { LatLngExpression, Map as LeafletMap } from 'leaflet';
-import { Location, Marker as MarkerType, Route } from '../../types';
+import { Location, Marker as MarkerType, Route, MapTileLayer } from '../../types';
+import { getMapLayer } from '../../config/mapLayers';
 import 'leaflet/dist/leaflet.css';
 
 // Fix for default markers in react-leaflet
@@ -47,9 +48,15 @@ interface MapProps {
   onMapReady: (map: LeafletMap) => void;
   onRouteMarkerDrag?: (isStart: boolean, location: Location) => void;
   onContextMenu?: (location: Location) => void;
+  onMapMoveEnd?: (center: Location, zoom: number) => void;
+  currentLayer: string;
 }
 
-function MapEventHandler({ onMapClick, onContextMenu }: { onMapClick: (location: Location) => void; onContextMenu?: (location: Location) => void }) {
+function MapEventHandler({ onMapClick, onContextMenu, onMapMoveEnd }: { 
+  onMapClick: (location: Location) => void; 
+  onContextMenu?: (location: Location) => void;
+  onMapMoveEnd?: (center: Location, zoom: number) => void;
+}) {
   useMapEvents({
     click: (e) => {
       onMapClick({ lat: e.latlng.lat, lng: e.latlng.lng });
@@ -57,6 +64,14 @@ function MapEventHandler({ onMapClick, onContextMenu }: { onMapClick: (location:
     contextmenu: (e) => {
       if (onContextMenu) {
         onContextMenu({ lat: e.latlng.lat, lng: e.latlng.lng });
+      }
+    },
+    moveend: (e) => {
+      if (onMapMoveEnd) {
+        const map = e.target;
+        const center = map.getCenter();
+        const zoom = map.getZoom();
+        onMapMoveEnd({ lat: center.lat, lng: center.lng }, zoom);
       }
     }
   });
@@ -97,7 +112,9 @@ const MapComponent: React.FC<MapProps> = ({
   onMapClick,
   onMapReady,
   onRouteMarkerDrag,
-  onContextMenu
+  onContextMenu,
+  onMapMoveEnd,
+  currentLayer
 }) => {
   const handleContextMenu = (location: Location) => {
     if (onContextMenu) {
@@ -111,6 +128,8 @@ const MapComponent: React.FC<MapProps> = ({
     ? route.geometry.coordinates.map(coord => [coord[1], coord[0]] as LatLngExpression)
     : [];
 
+  const tileLayer = getMapLayer(currentLayer);
+
   return (
     <MapContainer
       center={[center.lat, center.lng]}
@@ -118,11 +137,13 @@ const MapComponent: React.FC<MapProps> = ({
       style={{ height: '100vh', width: '100%' }}
     >
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        key={currentLayer} // Force re-render when layer changes
+        attribution={tileLayer.attribution}
+        url={tileLayer.url}
+        maxZoom={tileLayer.maxZoom}
       />
       
-      <MapEventHandler onMapClick={onMapClick} onContextMenu={handleContextMenu} />
+      <MapEventHandler onMapClick={onMapClick} onContextMenu={handleContextMenu} onMapMoveEnd={onMapMoveEnd} />
       <MapReadyHandler onMapReady={onMapReady} />
       <MapCenterHandler center={center} zoom={zoom} />
       
