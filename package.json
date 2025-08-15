@@ -5,10 +5,18 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite",
+    "dev:backend": "cd backend && npm run dev",
     "build": "tsc && vite build",
+    "build:backend": "cd backend && npm run build",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:pwa": "npm run build && echo 'PWA build - requires workbox-cli: npm install -g workbox-cli && workbox generateSW'",
+    "build:electron": "npm run build && echo 'Electron build - requires electron-builder: npm install --save-dev electron electron-builder'",
+    "build:tauri": "npm run build && echo 'Tauri build - requires: npm install --save-dev @tauri-apps/cli && cargo install tauri-cli'",
+    "build:mobile": "npm run build && echo 'Mobile build - requires: npm install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/android'",
+    "build:docker": "docker build -f Dockerfile.standalone -t openmaps-standalone .",
+    "build:all": "npm run build && echo 'Standard build complete. See DEPLOYMENT.md for standalone app builds.'"
   },
   "dependencies": {
     "react": "^18.2.0",

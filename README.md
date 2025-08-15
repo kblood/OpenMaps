@@ -255,3 +255,80 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [ ] Mobile app versions (React Native)
 - [ ] Voice-guided navigation
 - [ ] Route sharing and social features
+
+## Standalone App Options
+
+OpenMaps can be packaged and distributed as a standalone application across multiple platforms. Here are the available deployment strategies:
+
+### 🌐 Progressive Web App (PWA)
+**Best for**: Cross-platform web distribution
+- **Platforms**: Any device with a modern browser
+- **Size**: ~5-20MB download
+- **Installation**: Install directly from browser
+- **Offline Support**: Service worker caching for maps and routes
+- **Implementation Status**: Planned for next release
+
+### 🖥️ Desktop Applications
+
+#### Electron App
+**Best for**: Full-featured desktop experience
+- **Platforms**: Windows, macOS, Linux
+- **Size**: ~150-300MB
+- **Features**: Full offline capability, system integration
+- **Distribution**: Direct download or package managers
+
+#### Tauri App (Recommended)
+**Best for**: Lightweight desktop alternative
+- **Platforms**: Windows, macOS, Linux  
+- **Size**: ~20-50MB (70% smaller than Electron)
+- **Performance**: Superior performance with Rust backend
+- **Memory**: Lower resource usage
+
+### 📱 Mobile Applications
+
+#### Capacitor Apps
+**Best for**: Native mobile experience
+- **Platforms**: iOS, Android
+- **Size**: ~50-100MB
+- **Distribution**: App stores (iOS App Store, Google Play)
+- **Features**: Native GPS, offline maps, device integration
+
+### 🚀 Self-Contained Deployments
+
+#### Docker Container
+**Best for**: Server deployment
+- **Platforms**: Any system with Docker
+- **Features**: Complete isolation, easy scaling
+- **Includes**: Frontend, backend, Redis cache
+
+#### Static Bundle + Embedded Server
+**Best for**: Simple single-file distribution
+- **Platforms**: Windows, macOS, Linux
+- **Size**: ~10-50MB executable
+- **Features**: No external dependencies
+
+## Deployment Roadmap
+
+### Phase 1: PWA Implementation (Next Release)
+- Service worker for offline caching
+- Web app manifest for installation
+- Tile caching strategy
+- Background sync for routes
+
+### Phase 2: Desktop Apps (Following Release)  
+- Tauri implementation for lightweight distribution
+- Electron version for feature-complete experience
+- Local tile storage and routing
+
+### Phase 3: Mobile Apps (Future)
+- Capacitor setup for iOS/Android
+- Native GPS and sensor integration
+- App store optimization
+
+### Phase 4: Offline-First Architecture (Long-term)
+- Local tile server with regional maps
+- Embedded OSRM routing engine
+- Offline geocoding database
+- Synchronization with online services
+
+For detailed implementation instructions, see [DEPLOYMENT.md](DEPLOYMENT.md).
