@@ -68,6 +68,11 @@ function App() {
   const [routeStartMarker, setRouteStartMarker] = useState<{location: Location; name: string} | null>(null);
   const [routeEndMarker, setRouteEndMarker] = useState<{location: Location; name: string} | null>(null);
   const routeMarkerDragHandlerRef = useRef<((isStart: boolean, location: Location, name: string) => void) | null>(null);
+  
+  // Polygon drawing state
+  const [polygonPoints, setPolygonPoints] = useState<[number, number][]>([]);
+  const [showPolygonPreview, setShowPolygonPreview] = useState(false);
+  const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
 
   const { location, loading: locating, getCurrentLocation } = useGeolocation();
 
@@ -315,6 +320,9 @@ function App() {
         onRouteMarkerDrag={handleRouteMarkerDrag}
         onMapMoveEnd={handleMapMoveEnd}
         currentLayer={currentMapLayer}
+        polygonPoints={polygonPoints}
+        showPolygonPreview={showPolygonPreview}
+        isDrawingPolygon={isDrawingPolygon}
       />
 
       {/* Search Bar */}
@@ -371,6 +379,12 @@ function App() {
         isOpen={showMapPacks}
         onClose={() => setShowMapPacks(false)}
         mapInstance={map || undefined}
+        polygonPoints={polygonPoints}
+        onPolygonPointsChange={setPolygonPoints}
+        showPolygonPreview={showPolygonPreview}
+        onShowPolygonPreviewChange={setShowPolygonPreview}
+        isDrawingPolygon={isDrawingPolygon}
+        onIsDrawingPolygonChange={setIsDrawingPolygon}
       />
     </div>
   );

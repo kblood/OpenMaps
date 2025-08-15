@@ -16,6 +16,12 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   mapInstance?: LeafletMap;
+  polygonPoints?: [number, number][];
+  onPolygonPointsChange?: (points: [number, number][]) => void;
+  showPolygonPreview?: boolean;
+  onShowPolygonPreviewChange?: (show: boolean) => void;
+  isDrawingPolygon?: boolean;
+  onIsDrawingPolygonChange?: (drawing: boolean) => void;
 }
 
 interface PolygonDrawingState {
@@ -24,17 +30,22 @@ interface PolygonDrawingState {
   showPreview: boolean;
 }
 
-const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => {
+const GlobalMapManager: React.FC<Props> = ({ 
+  isOpen, 
+  onClose, 
+  mapInstance,
+  polygonPoints = [],
+  onPolygonPointsChange,
+  showPolygonPreview = false,
+  onShowPolygonPreviewChange,
+  isDrawingPolygon = false,
+  onIsDrawingPolygonChange
+}) => {
   // State management
   const [activeTab, setActiveTab] = useState<'hierarchy' | 'custom' | 'downloads' | 'polygon'>('hierarchy');
   const [navigationState, setNavigationState] = useState<NavigationState | null>(null);
   const [customPacks, setCustomPacks] = useState<CustomMapPack[]>([]);
   const [downloads, setDownloads] = useState<Map<string, DownloadProgress>>(new Map());
-  const [polygonState, setPolygonState] = useState<PolygonDrawingState>({
-    isDrawing: false,
-    points: [],
-    showPreview: false
-  });
   
   // Custom pack creation form
   const [customPackForm, setCustomPackForm] = useState({
@@ -92,11 +103,9 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
       return;
     }
 
-    setPolygonState({
-      isDrawing: true,
-      points: [],
-      showPreview: false
-    });
+    onIsDrawingPolygonChange?.(true);
+    onPolygonPointsChange?.([]);
+    onShowPolygonPreviewChange?.(false);
 
     // Add click handler to map
     const clickHandler = (e: any) => {
@@ -104,10 +113,7 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
       const lng = e.latlng?.lng || e.lng;
       
       if (lat && lng) {
-        setPolygonState(prev => ({
-          ...prev,
-          points: [...prev.points, [lat, lng]]
-        }));
+        onPolygonPointsChange?.([...polygonPoints, [lat, lng]]);
       }
     };
 
@@ -123,11 +129,8 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
       mapDrawingHandlerRef.current = null;
     }
 
-    setPolygonState(prev => ({
-      ...prev,
-      isDrawing: false,
-      showPreview: true
-    }));
+    onIsDrawingPolygonChange?.(false);
+    onShowPolygonPreviewChange?.(true);
   };
 
   const clearPolygon = () => {
@@ -136,15 +139,13 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
       mapDrawingHandlerRef.current = null;
     }
 
-    setPolygonState({
-      isDrawing: false,
-      points: [],
-      showPreview: false
-    });
+    onIsDrawingPolygonChange?.(false);
+    onPolygonPointsChange?.([]);
+    onShowPolygonPreviewChange?.(false);
   };
 
   const createCustomPackFromPolygon = async () => {
-    if (polygonState.points.length < 3) {
+    if (polygonPoints.length < 3) {
       alert('Please draw a polygon with at least 3 points');
       return;
     }
@@ -158,7 +159,7 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
       const packId = await globalMapPackSystem.createCustomPack(
         customPackForm.name,
         customPackForm.description,
-        polygonState.points,
+        polygonPoints,
         customPackForm.zoomLevels,
         customPackForm.layerIds
       );
@@ -220,6 +221,40 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
       console.error('Custom pack download failed:', error);
       alert('Custom pack download failed. Please try again.');
     }
+  };
+
+  const handleDownloadAction = async (nodeId: string, currentStatus: string) => {
+    if (currentStatus === 'downloading') {
+      // Show pause/cancel options
+      const action = await showDownloadActionDialog();
+      if (action === 'pause') {
+        globalMapPackSystem.pauseDownload(nodeId);
+      } else if (action === 'cancel') {
+        globalMapPackSystem.cancelDownload(nodeId);
+      }
+    } else if (currentStatus === 'paused') {
+      globalMapPackSystem.resumeDownload(nodeId);
+    }
+  };
+
+  const showDownloadActionDialog = (): Promise<'pause' | 'cancel' | 'continue'> => {
+    return new Promise((resolve) => {
+      const action = prompt(
+        'Download is in progress. What would you like to do?\n\n' +
+        '1. Type "pause" to pause the download\n' +
+        '2. Type "cancel" to cancel the download\n' +
+        '3. Press Cancel to continue downloading\n\n' +
+        'Enter your choice:'
+      );
+      
+      if (action?.toLowerCase() === 'pause') {
+        resolve('pause');
+      } else if (action?.toLowerCase() === 'cancel') {
+        resolve('cancel');
+      } else {
+        resolve('continue');
+      }
+    });
   };
 
   // ==================== RENDER HELPERS ====================
@@ -359,11 +394,24 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
             
             {!node.isDownloaded && (
               <button
-                onClick={() => handleDownloadNode(node.id)}
-                disabled={isDownloading}
-                className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600 disabled:bg-gray-400"
+                onClick={() => {
+                  if (isDownloading || downloadProgress?.status === 'paused') {
+                    handleDownloadAction(node.id, downloadProgress?.status || 'downloading');
+                  } else {
+                    handleDownloadNode(node.id);
+                  }
+                }}
+                className={`px-3 py-1 text-white rounded text-sm ${
+                  isDownloading 
+                    ? 'bg-orange-500 hover:bg-orange-600' 
+                    : downloadProgress?.status === 'paused'
+                    ? 'bg-blue-500 hover:bg-blue-600'
+                    : 'bg-green-500 hover:bg-green-600'
+                }`}
               >
-                {isDownloading ? 'Downloading...' : 'Download'}
+                {isDownloading ? '⏸️ Downloading...' : 
+                 downloadProgress?.status === 'paused' ? '▶️ Resume' : 
+                 '⬇️ Download'}
               </button>
             )}
           </div>
@@ -421,11 +469,24 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
           <div className="flex flex-col space-y-2 ml-4">
             {!pack.isDownloaded && (
               <button
-                onClick={() => handleDownloadCustomPack(pack.id)}
-                disabled={isDownloading}
-                className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600 disabled:bg-gray-400"
+                onClick={() => {
+                  if (isDownloading || downloadProgress?.status === 'paused') {
+                    handleDownloadAction(pack.id, downloadProgress?.status || 'downloading');
+                  } else {
+                    handleDownloadCustomPack(pack.id);
+                  }
+                }}
+                className={`px-3 py-1 text-white rounded text-sm ${
+                  isDownloading 
+                    ? 'bg-orange-500 hover:bg-orange-600' 
+                    : downloadProgress?.status === 'paused'
+                    ? 'bg-blue-500 hover:bg-blue-600'
+                    : 'bg-green-500 hover:bg-green-600'
+                }`}
               >
-                {isDownloading ? 'Downloading...' : 'Download'}
+                {isDownloading ? '⏸️ Downloading...' : 
+                 downloadProgress?.status === 'paused' ? '▶️ Resume' : 
+                 '⬇️ Download'}
               </button>
             )}
             
@@ -587,7 +648,7 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
                   <h4 className="font-semibold mb-3">Drawing Controls</h4>
                   
                   <div className="space-y-3">
-                    {!polygonState.isDrawing && polygonState.points.length === 0 && (
+                    {!isDrawingPolygon && polygonPoints.length === 0 && (
                       <button
                         onClick={startPolygonDrawing}
                         disabled={!mapInstance}
@@ -597,18 +658,18 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
                       </button>
                     )}
                     
-                    {polygonState.isDrawing && (
+                    {isDrawingPolygon && (
                       <div className="space-y-2">
                         <p className="text-sm text-gray-600">
                           Click on the map to add points to your polygon
                         </p>
                         <p className="text-sm font-medium">
-                          Points: {polygonState.points.length}
+                          Points: {polygonPoints.length}
                         </p>
                         <div className="flex space-x-2">
                           <button
                             onClick={finishPolygonDrawing}
-                            disabled={polygonState.points.length < 3}
+                            disabled={polygonPoints.length < 3}
                             className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600 disabled:bg-gray-400"
                           >
                             ✓ Finish Drawing
@@ -623,10 +684,10 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
                       </div>
                     )}
                     
-                    {polygonState.showPreview && (
+                    {showPolygonPreview && (
                       <div className="space-y-2">
                         <p className="text-sm font-medium text-green-600">
-                          ✓ Polygon Complete ({polygonState.points.length} points)
+                          ✓ Polygon Complete ({polygonPoints.length} points)
                         </p>
                         <button
                           onClick={clearPolygon}
@@ -713,7 +774,7 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
                     
                     <button
                       onClick={createCustomPackFromPolygon}
-                      disabled={!polygonState.showPreview || !customPackForm.name.trim()}
+                      disabled={!showPolygonPreview || !customPackForm.name.trim()}
                       className="w-full px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-400"
                     >
                       📦 Create Custom Pack
@@ -723,18 +784,18 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
               </div>
               
               {/* Polygon Preview */}
-              {polygonState.points.length > 0 && (
+              {polygonPoints.length > 0 && (
                 <div className="mt-6">
                   <h4 className="font-semibold mb-2">Polygon Preview</h4>
                   <div className="bg-gray-100 rounded p-3 text-sm">
-                    <p><strong>Points:</strong> {polygonState.points.length}</p>
-                    {polygonState.points.length >= 3 && (
+                    <p><strong>Points:</strong> {polygonPoints.length}</p>
+                    {polygonPoints.length >= 3 && (
                       <p><strong>Area:</strong> Custom polygon defined</p>
                     )}
                     <details className="mt-2">
                       <summary className="cursor-pointer text-blue-600">View Coordinates</summary>
                       <div className="mt-2 max-h-32 overflow-y-auto">
-                        {polygonState.points.map((point, index) => (
+                        {polygonPoints.map((point, index) => (
                           <div key={index} className="text-xs">
                             {index + 1}: {point[0].toFixed(6)}, {point[1].toFixed(6)}
                           </div>
@@ -767,14 +828,60 @@ const GlobalMapManager: React.FC<Props> = ({ isOpen, onClose, mapInstance }) => 
                       <div key={progress.nodeId} className="border border-gray-200 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-2">
                           <h4 className="font-medium">{name}</h4>
-                          <span className={`text-sm px-2 py-1 rounded ${
-                            progress.status === 'downloading' ? 'bg-blue-100 text-blue-800' :
-                            progress.status === 'completed' ? 'bg-green-100 text-green-800' :
-                            progress.status === 'error' ? 'bg-red-100 text-red-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>
-                            {progress.status}
-                          </span>
+                          <div className="flex items-center space-x-2">
+                            <span className={`text-sm px-2 py-1 rounded ${
+                              progress.status === 'downloading' ? 'bg-blue-100 text-blue-800' :
+                              progress.status === 'completed' ? 'bg-green-100 text-green-800' :
+                              progress.status === 'paused' ? 'bg-yellow-100 text-yellow-800' :
+                              progress.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                              progress.status === 'error' ? 'bg-red-100 text-red-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {progress.status}
+                            </span>
+                            
+                            {/* Control buttons */}
+                            {(progress.status === 'downloading' || progress.status === 'paused') && (
+                              <div className="flex space-x-1">
+                                {progress.status === 'downloading' && (
+                                  <>
+                                    <button
+                                      onClick={() => globalMapPackSystem.pauseDownload(progress.nodeId)}
+                                      className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600"
+                                      title="Pause download"
+                                    >
+                                      ⏸️
+                                    </button>
+                                    <button
+                                      onClick={() => globalMapPackSystem.cancelDownload(progress.nodeId)}
+                                      className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
+                                      title="Cancel download"
+                                    >
+                                      ❌
+                                    </button>
+                                  </>
+                                )}
+                                {progress.status === 'paused' && (
+                                  <>
+                                    <button
+                                      onClick={() => globalMapPackSystem.resumeDownload(progress.nodeId)}
+                                      className="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600"
+                                      title="Resume download"
+                                    >
+                                      ▶️
+                                    </button>
+                                    <button
+                                      onClick={() => globalMapPackSystem.cancelDownload(progress.nodeId)}
+                                      className="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
+                                      title="Cancel download"
+                                    >
+                                      ❌
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                         
                         <div className="mb-2">

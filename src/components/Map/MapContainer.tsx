@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Polyline } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Polyline, Polygon, CircleMarker } from 'react-leaflet';
 import { LatLngExpression, Map as LeafletMap } from 'leaflet';
 import { Location, Marker as MarkerType, Route } from '../../types';
 import { getMapLayer } from '../../config/mapLayers';
@@ -50,6 +50,9 @@ interface MapProps {
   onContextMenu?: (location: Location) => void;
   onMapMoveEnd?: (center: Location, zoom: number) => void;
   currentLayer: string;
+  polygonPoints?: [number, number][];
+  showPolygonPreview?: boolean;
+  isDrawingPolygon?: boolean;
 }
 
 function MapEventHandler({ onMapClick, onContextMenu, onMapMoveEnd }: { 
@@ -114,7 +117,10 @@ const MapComponent: React.FC<MapProps> = ({
   onRouteMarkerDrag,
   onContextMenu,
   onMapMoveEnd,
-  currentLayer
+  currentLayer,
+  polygonPoints = [],
+  showPolygonPreview = false,
+  isDrawingPolygon = false
 }) => {
   const handleContextMenu = (location: Location) => {
     if (onContextMenu) {
@@ -214,6 +220,87 @@ const MapComponent: React.FC<MapProps> = ({
           weight={4}
           opacity={0.7}
         />
+      )}
+      
+      {/* Polygon Drawing Visualization */}
+      {polygonPoints.length > 0 && (
+        <>
+          {/* Draw points as circle markers */}
+          {polygonPoints.map((point, index) => (
+            <CircleMarker
+              key={`polygon-point-${index}`}
+              center={[point[0], point[1]]}
+              radius={6}
+              color="#E11D48"
+              fillColor="#F97316"
+              fillOpacity={0.8}
+              weight={2}
+            >
+              <Popup>
+                <div>
+                  <p className="font-semibold">Point {index + 1}</p>
+                  <p className="text-sm">{point[0].toFixed(6)}, {point[1].toFixed(6)}</p>
+                </div>
+              </Popup>
+            </CircleMarker>
+          ))}
+          
+          {/* Draw lines between points */}
+          {polygonPoints.length > 1 && (
+            <Polyline
+              positions={polygonPoints.map(point => [point[0], point[1]] as LatLngExpression)}
+              color="#E11D48"
+              weight={3}
+              opacity={0.8}
+              dashArray="10, 5"
+            />
+          )}
+          
+          {/* Close the polygon with a line from last to first point if we have enough points and showing preview */}
+          {showPolygonPreview && polygonPoints.length >= 3 && (
+            <Polyline
+              positions={[
+                [polygonPoints[polygonPoints.length - 1][0], polygonPoints[polygonPoints.length - 1][1]],
+                [polygonPoints[0][0], polygonPoints[0][1]]
+              ]}
+              color="#E11D48"
+              weight={3}
+              opacity={0.8}
+              dashArray="10, 5"
+            />
+          )}
+          
+          {/* Show filled polygon when preview is enabled and we have enough points */}
+          {showPolygonPreview && polygonPoints.length >= 3 && (
+            <Polygon
+              positions={polygonPoints.map(point => [point[0], point[1]] as LatLngExpression)}
+              color="#E11D48"
+              fillColor="#F97316"
+              fillOpacity={0.2}
+              weight={2}
+            />
+          )}
+        </>
+      )}
+      
+      {/* Drawing mode indicator */}
+      {isDrawingPolygon && (
+        <div style={{
+          position: 'absolute',
+          top: '10px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(239, 29, 72, 0.9)',
+          color: 'white',
+          padding: '8px 16px',
+          borderRadius: '20px',
+          fontSize: '14px',
+          fontWeight: 'bold',
+          zIndex: 1000,
+          boxShadow: '0 2px 10px rgba(0,0,0,0.3)'
+        }}>
+          🖱️ Click on map to add polygon points • {polygonPoints.length} points added
+        </div>
       )}
     </MapContainer>
   );

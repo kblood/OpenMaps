@@ -65,7 +65,7 @@ interface DownloadProgress {
   current: number;
   total: number;
   nodeId: string;
-  status: 'downloading' | 'completed' | 'paused' | 'error';
+  status: 'downloading' | 'completed' | 'paused' | 'cancelled' | 'error';
   speed: number; // tiles per second
   estimatedTimeRemaining: number; // seconds
 }
@@ -84,6 +84,7 @@ export class GlobalMapPackSystem {
   private downloadProgressCallbacks: ((progress: DownloadProgress) => void)[] = [];
   private navigationCallbacks: ((state: NavigationState) => void)[] = [];
   private customPackCallbacks: ((packs: CustomMapPack[]) => void)[] = [];
+  private cancelledDownloads: Set<string> = new Set();
 
   constructor() {
     this.navigationState = {
@@ -268,7 +269,59 @@ export class GlobalMapPackSystem {
       throw error;
     } finally {
       this.downloadQueue.delete(nodeId);
+      this.cancelledDownloads.delete(nodeId);
     }
+  }
+
+  pauseDownload(nodeId: string): boolean {
+    const progress = this.downloadQueue.get(nodeId);
+    if (!progress || progress.status !== 'downloading') {
+      return false;
+    }
+
+    progress.status = 'paused';
+    this.notifyDownloadProgress(progress);
+    console.log(`⏸️ Download paused for node: ${nodeId}`);
+    return true;
+  }
+
+  resumeDownload(nodeId: string): boolean {
+    const progress = this.downloadQueue.get(nodeId);
+    if (!progress || progress.status !== 'paused') {
+      return false;
+    }
+
+    progress.status = 'downloading';
+    this.notifyDownloadProgress(progress);
+    console.log(`▶️ Download resumed for node: ${nodeId}`);
+    
+    // Note: In a full implementation, you'd need to restart the download process
+    // For now, this changes the status but doesn't restart the actual download
+    return true;
+  }
+
+  cancelDownload(nodeId: string): boolean {
+    const progress = this.downloadQueue.get(nodeId);
+    if (!progress || (progress.status !== 'downloading' && progress.status !== 'paused')) {
+      return false;
+    }
+
+    this.cancelledDownloads.add(nodeId);
+    progress.status = 'cancelled';
+    this.notifyDownloadProgress(progress);
+    
+    // Clean up the download
+    setTimeout(() => {
+      this.downloadQueue.delete(nodeId);
+      this.cancelledDownloads.delete(nodeId);
+    }, 1000); // Give UI time to show cancelled status
+
+    console.log(`❌ Download cancelled for node: ${nodeId}`);
+    return true;
+  }
+
+  isDownloadCancelled(nodeId: string): boolean {
+    return this.cancelledDownloads.has(nodeId);
   }
 
   private generateTileList(bounds: any, layerIds: string[], minZoom: number, maxZoom: number): TileInfo[] {
@@ -307,6 +360,24 @@ export class GlobalMapPackSystem {
     const startTime = Date.now();
 
     for (let i = 0; i < tiles.length; i += chunkSize) {
+      // Check if download was cancelled or paused
+      if (this.isDownloadCancelled(nodeId)) {
+        throw new Error('Download was cancelled');
+      }
+      
+      const currentProgress = this.downloadQueue.get(nodeId);
+      if (currentProgress?.status === 'paused') {
+        console.log(`⏸️ Download paused, waiting...`);
+        // Wait for resume or cancel
+        while (currentProgress.status === 'paused' && !this.isDownloadCancelled(nodeId)) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        if (this.isDownloadCancelled(nodeId)) {
+          throw new Error('Download was cancelled');
+        }
+      }
+
       const chunk = tiles.slice(i, i + chunkSize);
       const downloadPromises = chunk.map(tile => this.downloadSingleTile(tile, nodeId));
 
