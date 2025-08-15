@@ -90,3 +90,22 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Build scripts and installers
+build-*.bat
+setup.bat
+setup.sh
+test-*.bat
+test-*.js
+debug-*.bat
+installer.nsi
+
+# Electron builds and releases
+release/
+OpenMaps-*/
+*.zip
+
+# Specific development files
+nul
+quick-start.md
+ClaudeCodeFullAuto.bat
