@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clear Dynamic Explorer Cache</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .button { padding: 10px 20px; margin: 10px; background: #007acc; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .button:hover { background: #005a9e; }
+        .success { color: green; font-weight: bold; }
+        .error { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>🧹 Clear Dynamic Explorer Cache</h1>
+    <p>Use this to clear problematic cached data that might be causing infinite retries.</p>
+    
+    <button class="button" onclick="clearLocationCache()">Clear Location Database</button>
+    <button class="button" onclick="clearChildrenCache()">Clear Children Cache</button>
+    <button class="button" onclick="clearAllCaches()">Clear All Caches</button>
+    
+    <div id="result"></div>
+
+    <script type="module">
+        async function openDatabase() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open('openmaps_locations', 1);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        window.clearLocationCache = async function() {
+            const resultDiv = document.getElementById('result');
+            try {
+                const db = await openDatabase();
+                const transaction = db.transaction(['locations'], 'readwrite');
+                const store = transaction.objectStore('locations');
+                await new Promise((resolve, reject) => {
+                    const request = store.clear();
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+                resultDiv.innerHTML = '<div class="success">✅ Location cache cleared successfully</div>';
+                console.log('Location cache cleared');
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+                console.error('Error clearing location cache:', error);
+            }
+        };
+
+        window.clearChildrenCache = async function() {
+            const resultDiv = document.getElementById('result');
+            try {
+                const db = await openDatabase();
+                const transaction = db.transaction(['children'], 'readwrite');
+                const store = transaction.objectStore('children');
+                await new Promise((resolve, reject) => {
+                    const request = store.clear();
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+                resultDiv.innerHTML = '<div class="success">✅ Children cache cleared successfully</div>';
+                console.log('Children cache cleared');
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+                console.error('Error clearing children cache:', error);
+            }
+        };
+
+        window.clearAllCaches = async function() {
+            const resultDiv = document.getElementById('result');
+            try {
+                // Clear IndexedDB
+                const db = await openDatabase();
+                const transaction = db.transaction(['locations', 'children', 'apiCache', 'searchIndex'], 'readwrite');
+                
+                await Promise.all([
+                    new Promise((resolve, reject) => {
+                        const request = transaction.objectStore('locations').clear();
+                        request.onsuccess = () => resolve();
+                        request.onerror = () => reject(request.error);
+                    }),
+                    new Promise((resolve, reject) => {
+                        const request = transaction.objectStore('children').clear();
+                        request.onsuccess = () => resolve();
+                        request.onerror = () => reject(request.error);
+                    }),
+                    new Promise((resolve, reject) => {
+                        const request = transaction.objectStore('apiCache').clear();
+                        request.onsuccess = () => resolve();
+                        request.onerror = () => reject(request.error);
+                    }),
+                    new Promise((resolve, reject) => {
+                        const request = transaction.objectStore('searchIndex').clear();
+                        request.onsuccess = () => resolve();
+                        request.onerror = () => reject(request.error);
+                    })
+                ]);
+
+                // Clear localStorage 
+                Object.keys(localStorage).forEach(key => {
+                    if (key.startsWith('openmaps_') || key.includes('dynamic_') || key.includes('location_')) {
+                        localStorage.removeItem(key);
+                    }
+                });
+
+                // Clear sessionStorage
+                Object.keys(sessionStorage).forEach(key => {
+                    if (key.startsWith('openmaps_') || key.includes('dynamic_') || key.includes('location_')) {
+                        sessionStorage.removeItem(key);
+                    }
+                });
+
+                resultDiv.innerHTML = '<div class="success">✅ All caches cleared successfully! Refresh the page to start fresh.</div>';
+                console.log('All caches cleared');
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+                console.error('Error clearing all caches:', error);
+            }
+        };
+
+        console.log('🧹 Cache clearing tools ready');
+    </script>
+</body>
+</html>

@@ -26,6 +26,8 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
   const [children, setChildren] = useState<DynamicLocationNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const [lastRetryTime, setLastRetryTime] = useState(0);
 
   // Enhanced cache checking
   const accessPath = `dynamic_explorer:${path}`;
@@ -35,11 +37,29 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
   const loadChildren = useCallback(async (forceRefresh = false) => {
     if (!location.hasChildren || (children.length > 0 && !forceRefresh)) return;
     
+    // Prevent infinite retries
+    const now = Date.now();
+    const timeSinceLastRetry = now - lastRetryTime;
+    const maxRetries = 3;
+    const minRetryInterval = 2000; // 2 seconds
+    
+    if (retryCount >= maxRetries) {
+      setError(`Maximum retry attempts (${maxRetries}) reached for ${location.name}`);
+      console.error(`🛑 Max retries reached for ${location.name}`);
+      return;
+    }
+    
+    if (timeSinceLastRetry < minRetryInterval && retryCount > 0) {
+      console.log(`⏳ Retry cooldown for ${location.name}, waiting ${Math.ceil((minRetryInterval - timeSinceLastRetry) / 1000)}s`);
+      return;
+    }
+    
     setLoading(true);
     setError(null);
+    setLastRetryTime(now);
     
     try {
-      console.log(`🔄 Loading children for ${location.name} (${location.level}) via enhanced registry`);
+      console.log(`🔄 Loading children for ${location.name} (${location.level}) via enhanced registry (attempt ${retryCount + 1}/${maxRetries})`);
       
       // Use registry integration for intelligent caching
       const childNodes = await registryIntegration.getChildren(location.id, accessPath, forceRefresh);
@@ -49,6 +69,14 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
       }
       
       console.log(`✅ Loaded ${childNodes.length} children for ${location.name}`);
+      
+      if (childNodes.length === 0 && location.hasChildren) {
+        setRetryCount(prev => prev + 1);
+        console.log(`⚠️ No children found for ${location.name}, retry count: ${retryCount + 1}`);
+      } else {
+        setRetryCount(0); // Reset retry count on success
+      }
+      
       setChildren(childNodes);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load children';

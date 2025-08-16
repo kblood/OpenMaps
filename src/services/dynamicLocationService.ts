@@ -432,16 +432,21 @@ export class DynamicLocationService {
       throw new Error(`Parent location ${parentId} not found`);
     }
 
-    // Check memory cache first
+    // Check memory cache first (but don't cache empty results)
     if (this.childrenCache.has(parentId) && !forceRefresh) {
       const cachedChildren = this.childrenCache.get(parentId)!;
-      console.log(`📋 Returning cached children for ${parent.name} (${cachedChildren.length} items)`);
-      return cachedChildren;
+      if (cachedChildren.length > 0) {
+        console.log(`📋 Returning cached children for ${parent.name} (${cachedChildren.length} items)`);
+        return cachedChildren;
+      } else {
+        console.log(`🗑️ Clearing empty cache for ${parent.name} to allow retry`);
+        this.childrenCache.delete(parentId);
+      }
     }
 
-    // Check database cache for children
+    // Check database cache for children (but don't use empty caches)
     if (!forceRefresh) {
-  const cachedChildren = await this.getCachedChildren(parentId);
+      const cachedChildren = await this.getCachedChildren(parentId);
       if (cachedChildren && cachedChildren.length > 0) {
         
         // Auto-invalidate problematic cached data
@@ -520,9 +525,13 @@ export class DynamicLocationService {
       this.cache.set(parent.id, parent);
       await this.saveLocation(parent);
 
-      // Cache children in memory and database
-      this.childrenCache.set(parentId, children);
-      await this.saveChildrenCache(parentId, children);
+      // Cache children in memory and database (only if not empty)
+      if (children.length > 0) {
+        this.childrenCache.set(parentId, children);
+        await this.saveChildrenCache(parentId, children);
+      } else {
+        console.log(`🚫 Not caching empty result for ${parent.name} in memory`);
+      }
       // Persist each child to locations store and hydrate memory cache
       for (const child of children) {
         this.cache.set(child.id, child);
@@ -1220,9 +1229,87 @@ export class DynamicLocationService {
         console.warn(`⚠️ Backend cities API unavailable for ${state.name}, using fallback:`, backendError);
       }
 
-      // FALLBACK: Use our proper hierarchy service for known regions
+      // PRIORITY 2: Try WebGIS OSM administrative boundary detection for cities
+      if (cities.length === 0) {
+        console.log(`🌍 Using WebGIS OSM boundary detection for cities in ${state.name}`);
+        
+        const { getAdminBoundariesByQuery, filterBoundariesByAttributes } = await import('./webgisService');
+        
+        // Query admin levels 6-8 (municipalities, cities, towns) within state bounds
+        const cityBoundaries = await getAdminBoundariesByQuery({
+          adminLevels: [6, 7, 8], // municipalities, cities, towns
+          bbox: state.bounds,
+          countryCode: countryCode?.toLowerCase()
+        });
+        
+        // Filter for populated places with reasonable size
+        const filteredCities = filterBoundariesByAttributes(cityBoundaries, {
+          minPopulation: 500, // Minimum 500 people for state-level discovery
+          maxPopulation: undefined // No upper limit
+        });
+        
+        if (filteredCities.length > 0) {
+          cities = filteredCities
+            .slice(0, 25) // Limit to top 25 cities per state
+            .map((boundary, index) => {
+              const props = boundary.properties!;
+              const isLargeCity = (props.population || 0) > 100000;
+              const isMunicipality = props.adminLevel === 6;
+              
+              return {
+                id: `${isMunicipality ? 'municipality' : 'city'}_osm_${state.id}_${index}`,
+                name: props.name,
+                level: (isMunicipality ? 'municipality' : 'city') as 'municipality' | 'city',
+                parentId: state.id,
+                hasChildren: isMunicipality || isLargeCity, // Municipalities and large cities may have subdivisions
+                childrenLoaded: false,
+                childrenIds: [],
+                bounds: boundary.bounds,
+                center: {
+                  lat: (boundary.bounds.north + boundary.bounds.south) / 2,
+                  lng: (boundary.bounds.east + boundary.bounds.west) / 2
+                },
+                population: props.population,
+                area: props.area,
+                isCapital: false,
+                isPreloaded: false,
+                estimatedTiles: Math.max(100, Math.floor((props.area || 1) * 15)),
+                estimatedSizeMB: Math.max(2, Math.floor((props.area || 1) * 0.3)),
+                isDownloaded: false,
+                priority: isMunicipality ? 5 : 6,
+                tags: ['osm-boundary', `admin-level-${props.adminLevel}`, isMunicipality ? 'municipality' : 'city'],
+                metadata: {
+                  countryCode,
+                  adminLevel: props.adminLevel,
+                  source: 'osm-boundary',
+                  stateId: state.id,
+                  parentAdmin: props.parentAdmin,
+                  osmArea: props.area,
+                  osmPerimeter: props.perimeter
+                } as any,
+                lastUpdated: Date.now(),
+                source: 'overpass' as const
+              };
+            })
+            .sort((a: DynamicLocationNode, b: DynamicLocationNode) => {
+              // Sort municipalities first, then by population, then by name
+              const aIsMunicipality = a.level === 'municipality';
+              const bIsMunicipality = b.level === 'municipality';
+              if (aIsMunicipality !== bIsMunicipality) return aIsMunicipality ? -1 : 1;
+              
+              if (a.population && b.population && a.population !== b.population) {
+                return b.population - a.population;
+              }
+              return a.name.localeCompare(b.name);
+            });
+          
+          console.log(`✅ WebGIS OSM: Found ${cities.length} cities/municipalities for ${state.name}`);
+        }
+      }
+
+      // PRIORITY 3: Use our proper hierarchy service for known regions (Denmark)
       const hierarchyConfig = this.getCountryHierarchy(countryCode);
-      if (hierarchyConfig.hasProperHierarchy && countryCode === 'DK' && (state.metadata as any)?.source === 'proper-hierarchy') {
+      if (cities.length === 0 && hierarchyConfig.hasProperHierarchy && countryCode === 'DK' && (state.metadata as any)?.source === 'proper-hierarchy') {
         console.log(`🔄 Using proper hierarchy service for ${hierarchyConfig.municipalityLevel}s in ${state.name}`);
         
         const { geoNamesAdminHierarchyService } = await import('./geoNamesAdminHierarchyService');
@@ -1239,7 +1326,7 @@ export class DynamicLocationService {
               hasChildren: true, // Municipalities can contain cities/towns
               childrenLoaded: false,
               childrenIds: [],
-              bounds: this.createBoundsFromPoint(municipality.lat, municipality.lng, 0.05),
+              bounds: this.createBoundsFromPoint(municipality.lat, municipality.lng, 0.25), // Larger bounds for municipality coverage
               center: { lat: municipality.lat, lng: municipality.lng },
               population: municipality.population,
               isCapital: false,
@@ -1354,12 +1441,82 @@ export class DynamicLocationService {
     let cities: DynamicLocationNode[] = [];
     
     try {
-      // First try the proper hierarchy service for known countries
-      if (countryCode === 'DK' && municipality.metadata?.source === 'proper-hierarchy') {
+      // PRIORITY 1: Try WebGIS OSM administrative boundary detection for cities/towns
+      console.log(`🌍 Using WebGIS OSM boundary detection for cities in ${municipality.name}`);
+      
+      const { getAdminBoundariesByQuery, filterBoundariesByAttributes } = await import('./webgisService');
+      
+      // Query admin levels 8-10 (cities, towns, neighborhoods) within municipality bounds
+      const cityBoundaries = await getAdminBoundariesByQuery({
+        adminLevels: [8, 9, 10], // cities, districts, neighborhoods
+        bbox: municipality.bounds,
+        countryCode: countryCode?.toLowerCase()
+      });
+      
+      // Filter for actual populated places (not just administrative divisions)
+      const filteredCities = filterBoundariesByAttributes(cityBoundaries, {
+        minPopulation: 100, // Minimum 100 people to be considered a settlement
+        namePattern: undefined // Accept all names
+      });
+      
+      if (filteredCities.length > 0) {
+        cities = filteredCities.map((boundary, index) => {
+          const props = boundary.properties!;
+          return {
+            id: `city_osm_${municipality.id}_${index}`,
+            name: props.name,
+            level: 'city' as const,
+            parentId: municipality.id,
+            hasChildren: (props.population || 0) > 25000 || props.adminLevel === 8, // Cities may have districts
+            childrenLoaded: false,
+            childrenIds: [],
+            bounds: boundary.bounds,
+            center: {
+              lat: (boundary.bounds.north + boundary.bounds.south) / 2,
+              lng: (boundary.bounds.east + boundary.bounds.west) / 2
+            },
+            population: props.population,
+            area: props.area,
+            isCapital: false,
+            isPreloaded: false,
+            estimatedTiles: Math.max(50, Math.floor((props.area || 1) * 10)),
+            estimatedSizeMB: Math.max(1, Math.floor((props.area || 1) * 0.2)),
+            isDownloaded: false,
+            priority: 7,
+            tags: ['city', 'osm-boundary', `admin-level-${props.adminLevel}`],
+            metadata: {
+              countryCode,
+              adminLevel: props.adminLevel,
+              source: 'osm-boundary',
+              municipalityId: municipality.id,
+              parentAdmin: props.parentAdmin,
+              osmArea: props.area,
+              osmPerimeter: props.perimeter
+            },
+            lastUpdated: Date.now(),
+            source: 'overpass' as const
+          };
+        })
+        .sort((a: DynamicLocationNode, b: DynamicLocationNode) => {
+          // Sort by population desc, then by admin level asc (cities before neighborhoods)
+          if (a.population && b.population && a.population !== b.population) {
+            return b.population - a.population;
+          }
+          const aLevel = a.metadata?.adminLevel || 99;
+          const bLevel = b.metadata?.adminLevel || 99;
+          if (aLevel !== bLevel) return aLevel - bLevel;
+          return a.name.localeCompare(b.name);
+        });
+        
+        console.log(`✅ WebGIS OSM: Found ${cities.length} cities/towns for ${municipality.name}`);
+      }
+      
+      // PRIORITY 2: Try the proper hierarchy service for known countries (Denmark)
+      if (cities.length === 0 && countryCode === 'DK' && (municipality.metadata as any)?.source === 'proper-hierarchy') {
         console.log(`🔄 Using proper hierarchy service for cities in ${municipality.name}`);
         
         const { geoNamesAdminHierarchyService } = await import('./geoNamesAdminHierarchyService');
-        const geonameId = municipality.metadata?.geonameId;
+        const geonameId = (municipality.metadata as any)?.geonameid;
         
         if (geonameId) {
           try {
@@ -1369,7 +1526,7 @@ export class DynamicLocationService {
               name: city.name,
               level: 'city' as const,
               parentId: municipality.id,
-              hasChildren: city.population > 50000, // Large cities may have districts
+              hasChildren: (city.population || 0) > 50000, // Large cities may have districts
               childrenLoaded: false,
               childrenIds: [],
               bounds: this.createBoundsFromPoint(city.lat, city.lng, 0.01),
@@ -1384,7 +1541,7 @@ export class DynamicLocationService {
               tags: ['city', 'proper-hierarchy'],
               metadata: { 
                 countryCode,
-                geonameId: city.geonameId,
+                geonameid: city.geonameId,
                 source: 'proper-hierarchy',
                 municipalityId: geonameId
               } as any,
@@ -1439,23 +1596,48 @@ export class DynamicLocationService {
               population: parseInt(item.extratags?.population || '0') || undefined,
               isCapital: false,
               isPreloaded: false,
-              estimatedTiles: 200,
-              estimatedSizeMB: 4,
+              estimatedTiles: 100,
+              estimatedSizeMB: 2,
               isDownloaded: false,
-              priority: 7,
-              tags: ['city', 'nominatim-fallback'],
+              priority: 6,
+              tags: ['city', 'nominatim-validated', item.type],
               metadata: { 
                 countryCode,
-                placeId: item.place_id,
-                source: 'nominatim',
-                municipalityId: municipality.id
+                place_id: item.place_id,
+                source: 'nominatim-validated',
+                osmType: item.type,
+                importance: parseFloat(item.importance || '0')
               } as any,
               lastUpdated: Date.now(),
-              source: 'api' as const
-            }));
+              source: 'nominatim' as const
+            }))
+            .sort((a: DynamicLocationNode, b: DynamicLocationNode) => {
+              // Sort by population, then importance, then name
+              if (a.population && b.population && a.population !== b.population) {
+                return b.population - a.population;
+              }
+              const aImportance = (a.metadata as any)?.importance || 0;
+              const bImportance = (b.metadata as any)?.importance || 0;
+              if (aImportance !== bImportance) return bImportance - aImportance;
+              return a.name.localeCompare(b.name);
+            });
           
-          console.log(`✅ Nominatim fallback: Found ${cities.length} cities for ${municipality.name}`);
+          console.log(`✅ Enhanced Nominatim: Found ${cities.length} geographically validated cities for ${municipality.name}`);
         }
+      }
+      
+      // Cache the results
+      if (cities.length > 0) {
+        await this.saveChildrenCache(municipality.id, cities);
+        
+        console.log(`📊 City detection summary for ${municipality.name}:`);
+        console.log(`   - Total cities found: ${cities.length}`);
+        console.log(`   - OSM boundaries: ${cities.filter(c => c.tags.includes('osm-boundary')).length}`);
+        console.log(`   - Proper hierarchy: ${cities.filter(c => c.tags.includes('proper-hierarchy')).length}`);
+        console.log(`   - Nominatim validated: ${cities.filter(c => c.tags.includes('nominatim-validated')).length}`);
+        console.log(`   - With population data: ${cities.filter(c => c.population).length}`);
+      } else {
+        console.log(`⚠️ No cities found for ${municipality.name} - this may be a rural municipality`);
       }
       
       return cities;
@@ -1651,6 +1833,12 @@ export class DynamicLocationService {
 
   private async saveChildrenCache(parentId: string, children: DynamicLocationNode[]): Promise<void> {
     if (!this.db) return;
+    
+    // Don't cache empty results - they should be retried
+    if (children.length === 0) {
+      console.log(`🚫 Not caching empty result for ${parentId} - allowing retry`);
+      return;
+    }
     
     const transaction = this.db.transaction(['children'], 'readwrite');
     const store = transaction.objectStore('children');

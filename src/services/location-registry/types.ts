@@ -3,7 +3,7 @@
 export interface LocationRegistryNode {
   id: string;
   name: string;
-  level: 'world' | 'continent' | 'country' | 'state' | 'region' | 'city' | 'district' | 'custom';
+  level: 'world' | 'continent' | 'country' | 'state' | 'region' | 'city' | 'municipality' | 'district' | 'custom';
   parentId?: string;
   hasChildren: boolean;
   childrenLoaded: boolean;

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Municipality City Loading</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { border: 1px solid #ccc; padding: 20px; margin: 10px 0; }
+        .loading { color: #666; }
+        .error { color: red; }
+        .success { color: green; }
+        .city-item { margin: 5px 0; padding: 10px; background: #f5f5f5; border-radius: 4px; }
+        .logs { background: #000; color: #00ff00; padding: 10px; font-family: monospace; max-height: 400px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>🏛️ Municipality City Loading Test</h1>
+    <p>Testing the enhanced WebGIS city detection for municipalities in Denmark</p>
+
+    <div class="test-section">
+        <h2>Test 1: Load Cities for Aalborg Municipality</h2>
+        <button onclick="testAalborgCities()">Test Aalborg Municipality Cities</button>
+        <div id="aalborg-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 2: Load Cities for København Municipality</h2>
+        <button onclick="testCopenhagenCities()">Test København Municipality Cities</button>
+        <div id="copenhagen-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Logs</h2>
+        <div id="logs" class="logs"></div>
+    </div>
+
+    <script type="module">
+        // Import the enhanced dynamic location service
+        import { dynamicLocationService } from 'http://localhost:3004/src/services/dynamicLocationService.ts';
+
+        let logDiv = document.getElementById('logs');
+        
+        // Override console.log to capture logs
+        const originalLog = console.log;
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            logDiv.innerHTML += args.join(' ') + '\\n';
+            logDiv.scrollTop = logDiv.scrollHeight;
+        };
+
+        // Test Aalborg Municipality
+        window.testAalborgCities = async function() {
+            const resultDiv = document.getElementById('aalborg-result');
+            resultDiv.innerHTML = '<div class="loading">Loading cities for Aalborg Municipality...</div>';
+            
+            try {
+                // First ensure the service is initialized
+                await dynamicLocationService.initialize();
+                
+                // Create a mock Aalborg municipality node
+                const aalborgMunicipality = {
+                    id: 'municipality_DK_2581764',
+                    name: 'Aalborg',
+                    level: 'municipality',
+                    hasChildren: true,
+                    childrenLoaded: false,
+                    childrenIds: [],
+                    bounds: { north: 57.2, south: 56.8, east: 10.2, west: 9.7 },
+                    center: { lat: 57.0, lng: 9.9 },
+                    metadata: { 
+                        countryCode: 'DK',
+                        geonameid: 2581764,
+                        source: 'proper-hierarchy'
+                    },
+                    isPreloaded: false,
+                    estimatedTiles: 1000,
+                    estimatedSizeMB: 20,
+                    isDownloaded: false,
+                    priority: 5,
+                    tags: ['municipality'],
+                    lastUpdated: Date.now(),
+                    source: 'api'
+                };
+
+                console.log('🧪 Testing Aalborg Municipality city loading...');
+                const cities = await dynamicLocationService.getChildren(aalborgMunicipality.id);
+                
+                if (cities.length > 0) {
+                    resultDiv.innerHTML = `
+                        <div class="success">✅ Found ${cities.length} cities in Aalborg Municipality:</div>
+                        ${cities.map(city => `
+                            <div class="city-item">
+                                <strong>${city.name}</strong> (${city.level})
+                                <br>Population: ${city.population || 'Unknown'}
+                                <br>Source: ${city.source}
+                                <br>Tags: ${city.tags.join(', ')}
+                            </div>
+                        `).join('')}
+                    `;
+                } else {
+                    resultDiv.innerHTML = '<div class="error">❌ No cities found for Aalborg Municipality</div>';
+                }
+            } catch (error) {
+                console.error('Error testing Aalborg cities:', error);
+                resultDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            }
+        };
+
+        // Test Copenhagen Municipality  
+        window.testCopenhagenCities = async function() {
+            const resultDiv = document.getElementById('copenhagen-result');
+            resultDiv.innerHTML = '<div class="loading">Loading cities for København Municipality...</div>';
+            
+            try {
+                // Create a mock København municipality node
+                const copenhagenMunicipality = {
+                    id: 'municipality_DK_2618425',
+                    name: 'København',
+                    level: 'municipality',
+                    hasChildren: true,
+                    childrenLoaded: false,
+                    childrenIds: [],
+                    bounds: { north: 55.73, south: 55.61, east: 12.65, west: 12.45 },
+                    center: { lat: 55.67, lng: 12.55 },
+                    metadata: { 
+                        countryCode: 'DK',
+                        geonameid: 2618425,
+                        source: 'proper-hierarchy'
+                    },
+                    isPreloaded: false,
+                    estimatedTiles: 1000,
+                    estimatedSizeMB: 20,
+                    isDownloaded: false,
+                    priority: 5,
+                    tags: ['municipality'],
+                    lastUpdated: Date.now(),
+                    source: 'api'
+                };
+
+                console.log('🧪 Testing København Municipality city loading...');
+                const cities = await dynamicLocationService.getChildren(copenhagenMunicipality.id);
+                
+                if (cities.length > 0) {
+                    resultDiv.innerHTML = `
+                        <div class="success">✅ Found ${cities.length} cities in København Municipality:</div>
+                        ${cities.map(city => `
+                            <div class="city-item">
+                                <strong>${city.name}</strong> (${city.level})
+                                <br>Population: ${city.population || 'Unknown'}
+                                <br>Source: ${city.source}
+                                <br>Tags: ${city.tags.join(', ')}
+                            </div>
+                        `).join('')}
+                    `;
+                } else {
+                    resultDiv.innerHTML = '<div class="error">❌ No cities found for København Municipality</div>';
+                }
+            } catch (error) {
+                console.error('Error testing København cities:', error);
+                resultDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            }
+        };
+
+        console.log('🚀 Municipality City Loading Test Ready');
+        console.log('Click the buttons above to test enhanced city detection');
+    </script>
+</body>
+</html>
