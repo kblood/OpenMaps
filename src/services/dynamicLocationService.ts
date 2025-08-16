@@ -121,6 +121,8 @@ export class DynamicLocationService {
 
   // ==================== CORE DATA PRELOADING ====================
   private async preloadCoreData(): Promise<void> {
+    console.log('🔄 Preloading core location data...');
+    
     // Load minimal world structure that's always available offline
     const coreData: DynamicLocationNode[] = [
       {
@@ -268,8 +270,15 @@ export class DynamicLocationService {
     // Save core data to cache and database
     for (const location of coreData) {
       this.cache.set(location.id, location);
-      await this.saveLocation(location);
+      try {
+        await this.saveLocation(location);
+        console.log(`✅ Saved ${location.name} (${location.level}) to database`);
+      } catch (error) {
+        console.error(`❌ Failed to save ${location.name}:`, error);
+      }
     }
+    
+    console.log(`✅ Preloaded ${coreData.length} core locations to cache and database`);
   }
 
   // ==================== DYNAMIC LOCATION LOADING ====================
@@ -328,7 +337,12 @@ export class DynamicLocationService {
         case 'continent':
           // Load countries from REST Countries API
           console.log(`🌍 Loading countries for continent: ${parent.name}`);
-          children = await this.loadCountriesForContinent(parent);
+          try {
+            children = await this.loadCountriesForContinent(parent);
+          } catch (error) {
+            console.error(`❌ API failed for ${parent.name}, using fallback:`, error);
+            children = await this.loadFallbackCountriesForContinent(parent);
+          }
           break;
           
         case 'country':
@@ -366,10 +380,15 @@ export class DynamicLocationService {
       console.error(`❌ Failed to load children for ${parent.name}:`, error);
       console.error('Error details:', error);
       
-      // Try fallback for some levels
+      // For continents, always return fallback if main approach fails
       if (parent.level === 'continent') {
         console.log('🔄 Trying fallback for continent...');
-        return await this.loadFallbackCountriesForContinent(parent);
+        try {
+          return await this.loadFallbackCountriesForContinent(parent);
+        } catch (fallbackError) {
+          console.error('❌ Fallback also failed:', fallbackError);
+          return [];
+        }
       }
       
       // Return empty array on error, but don't mark as loaded
@@ -786,11 +805,27 @@ export class DynamicLocationService {
 
   // ==================== DATABASE OPERATIONS ====================
   private async saveLocation(location: DynamicLocationNode): Promise<void> {
-    if (!this.db) return;
+    if (!this.db) {
+      console.warn('Database not initialized, cannot save location:', location.name);
+      return;
+    }
     
-    const transaction = this.db.transaction(['locations'], 'readwrite');
-    const store = transaction.objectStore('locations');
-    await store.put(location);
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction(['locations'], 'readwrite');
+      const store = transaction.objectStore('locations');
+      const request = store.put(location);
+      
+      request.onsuccess = () => resolve();
+      request.onerror = () => {
+        console.error('Failed to save location to database:', location.name, request.error);
+        reject(request.error);
+      };
+      
+      transaction.onerror = () => {
+        console.error('Transaction failed while saving location:', location.name, transaction.error);
+        reject(transaction.error);
+      };
+    });
   }
 
   async getLocation(id: string): Promise<DynamicLocationNode | null> {

@@ -29,10 +29,14 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
     setError(null);
     
     try {
+      console.log(`🔄 Loading children for ${location.name} (${location.level})`);
       const childNodes = await dynamicLocationService.getChildren(location.id);
+      console.log(`✅ Loaded ${childNodes.length} children for ${location.name}`);
       setChildren(childNodes);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load children');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load children';
+      console.error(`❌ Failed to load children for ${location.name}:`, err);
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
