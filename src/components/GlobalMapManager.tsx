@@ -1165,7 +1165,7 @@ const GlobalMapManager: React.FC<Props> = ({
                           }}
                           className="border border-gray-300 rounded px-2 py-1 text-sm"
                         >
-                          {Array.from({ length: 15 }, (_, i) => i + 1).map(z => (
+                          {Array.from({ length: 18 }, (_, i) => i + 1).map(z => (
                             <option key={z} value={z}>Min: {z}</option>
                           ))}
                         </select>
@@ -1180,7 +1180,7 @@ const GlobalMapManager: React.FC<Props> = ({
                           }}
                           className="border border-gray-300 rounded px-2 py-1 text-sm"
                         >
-                          {Array.from({ length: 15 }, (_, i) => i + 1).map(z => (
+                          {Array.from({ length: 18 }, (_, i) => i + 1).map(z => (
                             <option key={z} value={z}>Max: {z}</option>
                           ))}
                         </select>
