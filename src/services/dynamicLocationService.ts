@@ -4,7 +4,7 @@
 export interface DynamicLocationNode {
   id: string;
   name: string;
-  level: 'world' | 'continent' | 'country' | 'state' | 'region' | 'city' | 'district' | 'custom';
+  level: 'world' | 'continent' | 'country' | 'state' | 'region' | 'city' | 'municipality' | 'district' | 'custom';
   parentId?: string;
   hasChildren: boolean;
   childrenLoaded: boolean;
@@ -79,6 +79,59 @@ export class DynamicLocationService {
     restcountries: 'https://restcountries.com/v3.1',
     geonames: 'http://api.geonames.org', // Requires API key
   };
+
+  // Country-specific hierarchy configurations
+  private readonly COUNTRY_HIERARCHIES: { [countryCode: string]: {
+    stateLevel: 'state' | 'region' | 'province',
+    municipalityLevel: 'municipality' | 'county' | 'district',
+    cityLevel: 'city' | 'town' | 'village',
+    hasProperHierarchy: boolean,
+    fallbackToNominatim: boolean,
+    maxLevels: number
+  } } = {
+    'DK': {
+      stateLevel: 'region',
+      municipalityLevel: 'municipality', 
+      cityLevel: 'city',
+      hasProperHierarchy: true,
+      fallbackToNominatim: true,
+      maxLevels: 5 // country -> region -> municipality -> city -> district
+    },
+    'US': {
+      stateLevel: 'state',
+      municipalityLevel: 'county',
+      cityLevel: 'city',
+      hasProperHierarchy: false,
+      fallbackToNominatim: true,
+      maxLevels: 4 // country -> state -> county -> city
+    },
+    'DE': {
+      stateLevel: 'state',
+      municipalityLevel: 'district',
+      cityLevel: 'city',
+      hasProperHierarchy: false,
+      fallbackToNominatim: true,
+      maxLevels: 4 // country -> state -> district -> city
+    },
+    'DEFAULT': {
+      stateLevel: 'state',
+      municipalityLevel: 'municipality',
+      cityLevel: 'city',
+      hasProperHierarchy: false,
+      fallbackToNominatim: true,
+      maxLevels: 3 // country -> state -> city
+    }
+  };
+
+  // Frontend no longer calls Overpass directly; uses backend WebGIS API
+
+  /**
+   * Get hierarchy configuration for a specific country
+   */
+  private getCountryHierarchy(countryCode?: string) {
+    if (!countryCode) return this.COUNTRY_HIERARCHIES['DEFAULT'];
+    return this.COUNTRY_HIERARCHIES[countryCode.toUpperCase()] || this.COUNTRY_HIERARCHIES['DEFAULT'];
+  }
 
   constructor() {
     this.initializeDatabase();
@@ -374,7 +427,7 @@ export class DynamicLocationService {
 
   // ==================== DYNAMIC LOCATION LOADING ====================
   async getChildren(parentId: string, forceRefresh = false): Promise<DynamicLocationNode[]> {
-    const parent = await this.getLocation(parentId);
+  const parent = await this.getLocation(parentId);
     if (!parent) {
       throw new Error(`Parent location ${parentId} not found`);
     }
@@ -388,7 +441,7 @@ export class DynamicLocationService {
 
     // Check database cache for children
     if (!forceRefresh) {
-      const cachedChildren = await this.getCachedChildren(parentId);
+  const cachedChildren = await this.getCachedChildren(parentId);
       if (cachedChildren && cachedChildren.length > 0) {
         
         // Auto-invalidate problematic cached data
@@ -440,6 +493,8 @@ export class DynamicLocationService {
         } else {
           console.log(`💾 Found ${cachedChildren.length} cached children for ${parent.name} in database`);
           this.childrenCache.set(parentId, cachedChildren);
+          // hydrate memory cache so getLocation works for these ids
+          cachedChildren.forEach(child => this.cache.set(child.id, child));
           return cachedChildren;
         }
       }
@@ -468,6 +523,11 @@ export class DynamicLocationService {
       // Cache children in memory and database
       this.childrenCache.set(parentId, children);
       await this.saveChildrenCache(parentId, children);
+      // Persist each child to locations store and hydrate memory cache
+      for (const child of children) {
+        this.cache.set(child.id, child);
+        try { await this.saveLocation(child); } catch { /* ignore */ }
+      }
 
       console.log(`✅ Loaded and cached ${children.length} children for ${parent.name}`);
       return children;
@@ -562,9 +622,31 @@ export class DynamicLocationService {
           }
           break;
           
+        case 'municipality':
+          // Load cities/towns within municipality
+          console.log(`🏛️ Loading cities/towns for municipality: ${parent.name}`);
+          try {
+            children = await this.loadCitiesForMunicipality(parent);
+          } catch (error) {
+            console.error(`❌ Failed to load cities for municipality ${parent.name}:`, error);
+            children = [];
+          }
+          break;
+          
         case 'city':
-          // Skip districts for now to avoid API complexity
-          console.log(`🏘️ City level reached: ${parent.name} (no districts loaded)`);
+          // Load districts/neighborhoods for cities
+          console.log(`🏙️ Loading districts for city: ${parent.name}`);
+          try {
+            children = await this.loadDistrictsForCity(parent);
+          } catch (error) {
+            console.error(`❌ Failed to load districts for city ${parent.name}:`, error);
+            children = [];
+          }
+          break;
+          
+        case 'district':
+          // End of hierarchy - districts don't have children
+          console.log(`🏘️ District level reached: ${parent.name} (no further subdivision)`);
           children = [];
           break;
 
@@ -675,7 +757,7 @@ export class DynamicLocationService {
           lastUpdated: Date.now(),
           source: 'api' as const
         }))
-        .sort((a, b) => {
+  .sort((a: DynamicLocationNode, b: DynamicLocationNode) => {
           // Sort capitals first, then by population, then by name
           if (a.isCapital && !b.isCapital) return -1;
           if (!a.isCapital && b.isCapital) return 1;
@@ -890,67 +972,6 @@ export class DynamicLocationService {
   }
 
   // Simplified state loader
-  private async loadSimpleStatesForCountry(country: DynamicLocationNode): Promise<DynamicLocationNode[]> {
-    console.log(`📋 Loading simplified states for ${country.name} (${country.id})`);
-    
-    // For now, just create a few sample states for major countries
-    const sampleStates: { [key: string]: string[] } = {
-      'country_us': ['California', 'Texas', 'Florida', 'New York', 'Illinois'],
-      'country_ca': ['Ontario', 'Quebec', 'British Columbia', 'Alberta'],
-      'country_de': ['Bavaria', 'North Rhine-Westphalia', 'Baden-Württemberg'],
-      'country_fr': ['Île-de-France', 'Provence-Alpes-Côte d\'Azur', 'Nouvelle-Aquitaine'],
-      'country_gb': ['England', 'Scotland', 'Wales', 'Northern Ireland'],
-      'country_au': ['New South Wales', 'Victoria', 'Queensland', 'Western Australia'],
-      'country_dk': ['Capital Region', 'Central Denmark', 'North Denmark', 'Region Zealand', 'South Denmark'],
-      'country_se': ['Stockholm', 'Västra Götaland', 'Skåne', 'Uppsala', 'Östergötland'],
-      'country_no': ['Oslo', 'Viken', 'Rogaland', 'Møre og Romsdal', 'Nordland'],
-      'country_fi': ['Uusimaa', 'Pirkanmaa', 'Southwest Finland', 'North Ostrobothnia'],
-      'country_it': ['Lombardy', 'Lazio', 'Campania', 'Sicily', 'Veneto'],
-      'country_es': ['Andalusia', 'Catalonia', 'Madrid', 'Valencia', 'Galicia'],
-      'country_nl': ['North Holland', 'South Holland', 'North Brabant', 'Gelderland'],
-      'country_be': ['Flanders', 'Wallonia', 'Brussels-Capital'],
-      'country_ch': ['Zurich', 'Bern', 'Vaud', 'Aargau', 'St. Gallen'],
-      'country_at': ['Vienna', 'Lower Austria', 'Upper Austria', 'Styria', 'Tyrol']
-    };
-
-    let states = sampleStates[country.id];
-    
-    // If no specific states defined, create generic regions
-    if (!states) {
-      console.log(`📋 No specific states defined for ${country.name}, creating generic regions`);
-      states = [`${country.name} - North`, `${country.name} - South`, `${country.name} - Central`];
-    }
-    
-    return states.map((stateName, index) => ({
-      id: `state_${country.id}_${index}`,
-      name: stateName,
-      level: 'state' as const,
-      parentId: country.id,
-      hasChildren: true,
-      childrenLoaded: false,
-      childrenIds: [],
-      bounds: this.createBoundsFromPoint(
-        country.center.lat + (Math.random() - 0.5) * 10, 
-        country.center.lng + (Math.random() - 0.5) * 10, 
-        2
-      ),
-      center: {
-        lat: country.center.lat + (Math.random() - 0.5) * 10,
-        lng: country.center.lng + (Math.random() - 0.5) * 10
-      },
-      population: Math.floor(Math.random() * 10000000) + 1000000,
-      isCapital: false,
-      isPreloaded: false,
-      estimatedTiles: 5000,
-      estimatedSizeMB: 100,
-      isDownloaded: false,
-      priority: 5,
-      tags: ['state'],
-      metadata: { countryCode: country.metadata.countryCode },
-      lastUpdated: Date.now(),
-      source: 'api' as const
-    }));
-  }
 
   // Simplified city loader
   private async loadSimpleCitiesForState(state: DynamicLocationNode): Promise<DynamicLocationNode[]> {
@@ -1035,61 +1056,24 @@ export class DynamicLocationService {
         return [];
       }
 
-      console.log(`📡 Querying Overpass API for ${country.name} (${countryCode}) regions...`);
-      console.log(`🔍 Query bounds: ${country.bounds.south},${country.bounds.west},${country.bounds.north},${country.bounds.east}`);
-      
-      // Simplified query - look for administrative regions in Denmark
-      // Use broader admin levels and remove strict country filter for now
-      const query = `[out:json][timeout:30];
-        (
-          relation["admin_level"~"^(4|5|6)$"]["name"]["type"="boundary"]["boundary"="administrative"]
-          (${country.bounds.south},${country.bounds.west},${country.bounds.north},${country.bounds.east});
-        );
-        out center tags;`;
-
-      console.log(`📝 Overpass query:`, query);
-
-      const response = await fetch(this.API_ENDPOINTS.overpass, {
-        method: 'POST',
-        body: query,
-        headers: { 'Content-Type': 'text/plain' }
-      });
-
-      if (!response.ok) {
-        throw new Error(`Overpass API error: ${response.status} - ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      console.log(`📍 Overpass returned ${data.elements?.length || 0} elements for ${country.name}`);
-      let states: DynamicLocationNode[] = data.elements
-        .filter((element: any) => {
-          // Ensure we have name and proper tags
-          if (!element.tags || !element.tags.name) return false;
-          
-          // Strict country filtering to prevent cross-border pollution
-          const elementCountry = element.tags['ISO3166-1'] || element.tags.country_code || element.tags['addr:country'];
-          if (elementCountry && elementCountry.toLowerCase() !== countryCode.toLowerCase()) {
-            return false;
-          }
-          
-          // Only accept admin_level 4 or 5 for states/regions
-          return element.tags.boundary === 'administrative' && 
-                 element.tags.admin_level && 
-                 ['4', '5'].includes(element.tags.admin_level);
-        })
-        .map((element: any) => {
-          const bounds = this.calculateElementBounds(element);
-          return {
-            id: `state_${countryCode}_${element.id}`,
-            name: element.tags.name,
+      // First try backend WebGIS API
+      let states: DynamicLocationNode[] = [];
+      try {
+        const resp = await fetch(`http://localhost:3001/api/admin/regions?country=${encodeURIComponent(countryCode)}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          const regions = Array.isArray(data?.regions) ? data.regions : [];
+          states = regions.map((r: any) => ({
+            id: r.id,
+            name: r.name,
             level: 'state' as const,
             parentId: country.id,
             hasChildren: true,
             childrenLoaded: false,
             childrenIds: [],
-            bounds,
-            center: this.calculateElementCenter(element),
-            population: parseInt(element.tags.population) || undefined,
+            bounds: r.bounds || country.bounds,
+            center: r.center || { lat: (country.bounds.north + country.bounds.south) / 2, lng: (country.bounds.east + country.bounds.west) / 2 },
+            population: r.population,
             isCapital: false,
             isPreloaded: false,
             estimatedTiles: 5000,
@@ -1099,72 +1083,77 @@ export class DynamicLocationService {
             tags: ['state', 'region'],
             metadata: {
               countryCode,
-              adminLevel: parseInt(element.tags.admin_level),
-              wikidata: element.tags.wikidata
-            },
+              adminLevel: r.adminLevel,
+              iso3166_2: r.iso3166_2,
+              osmId: r.osm?.id,
+              osmType: r.osm?.type,
+              areaId: r.osm?.areaId
+            } as any,
             lastUpdated: Date.now(),
             source: 'api' as const
-          };
-        });
-
-      // If no results with admin_level 4, try admin_level 3 or 5
-      if (states.length === 0) {
-        console.log(`🔄 No admin_level 4 found for ${country.name}, trying other levels...`);
-        
-        const alternativeQuery = `[out:json][timeout:30];
-          (
-            relation["admin_level"]["name"]["type"="boundary"]["boundary"="administrative"]
-            (${country.bounds.south},${country.bounds.west},${country.bounds.north},${country.bounds.east});
-          );
-          out center tags;`;
-        
-        console.log(`📝 Alternative Overpass query:`, alternativeQuery);
-
-        const altResponse = await fetch(this.API_ENDPOINTS.overpass, {
-          method: 'POST',
-          body: alternativeQuery,
-          headers: { 'Content-Type': 'text/plain' }
-        });
-
-        if (altResponse.ok) {
-          const altData = await altResponse.json();
-          console.log(`📍 Alternative query returned ${altData.elements?.length || 0} elements for ${country.name}`);
+          }));
           
-          states = altData.elements
-            .filter((element: any) => element.tags && element.tags.name)
-            .map((element: any) => {
-              const bounds = this.calculateElementBounds(element);
-              return {
-                id: `state_${countryCode}_${element.id}`,
-                name: element.tags.name,
-                level: 'state' as const,
-                parentId: country.id,
-                hasChildren: true,
-                childrenLoaded: false,
-                childrenIds: [],
-                bounds,
-                center: this.calculateElementCenter(element),
-                population: parseInt(element.tags.population) || undefined,
-                isCapital: false,
-                isPreloaded: false,
-                estimatedTiles: 5000,
-                estimatedSizeMB: 100,
-                isDownloaded: false,
-                priority: 5,
-                tags: ['state', 'region'],
-                metadata: {
-                  countryCode,
-                  adminLevel: parseInt(element.tags.admin_level),
-                  wikidata: element.tags.wikidata
-                },
-                lastUpdated: Date.now(),
-                source: 'api' as const
-              };
-            });
+          if (states.length > 0) {
+            console.log(`✅ Backend API: Found ${states.length} administrative regions for ${country.name}`);
+            return states;
+          }
+        } else {
+          console.warn(`⚠️ Backend regions API error: ${resp.status}`);
+        }
+      } catch (backendError) {
+        console.warn(`⚠️ Backend API unavailable, using fallback hierarchy service:`, backendError);
+      }
+
+      // FALLBACK: Use our proper hierarchy service for known countries
+      const hierarchyConfig = this.getCountryHierarchy(countryCode);
+      if (hierarchyConfig.hasProperHierarchy && countryCode === 'DK') {
+        console.log(`🔄 Using proper hierarchy service for ${countryCode}`);
+        
+        // Import our proper hierarchy service
+        const { geoNamesAdminHierarchyService } = await import('./geoNamesAdminHierarchyService');
+        
+        try {
+          const regions = await geoNamesAdminHierarchyService.getCountryRegions(countryCode);
+          states = regions.map((region) => ({
+            id: `region_${countryCode}_${region.geonameId}`,
+            name: region.name,
+            level: 'state' as const,
+            parentId: country.id,
+            hasChildren: true,
+            childrenLoaded: false,
+            childrenIds: [],
+            bounds: region.bbox ? {
+              north: region.bbox.north,
+              south: region.bbox.south,
+              east: region.bbox.east,
+              west: region.bbox.west
+            } : country.bounds,
+            center: { lat: region.lat, lng: region.lng },
+            population: region.population,
+            isCapital: false,
+            isPreloaded: false,
+            estimatedTiles: 5000,
+            estimatedSizeMB: 100,
+            isDownloaded: false,
+            priority: 5,
+            tags: ['state', 'region', 'proper-hierarchy'],
+            metadata: {
+              countryCode,
+              adminLevel: 1,
+              geonameId: region.geonameId,
+              adminCode1: region.adminCode1,
+              source: 'proper-hierarchy'
+            } as any,
+            lastUpdated: Date.now(),
+            source: 'api' as const
+          }));
+          
+          console.log(`✅ Proper Hierarchy: Found ${states.length} regions for Denmark including ${states.find(s => s.name.includes('Nordjylland')) ? 'Nordjylland ✅' : 'missing Nordjylland ❌'}`);
+        } catch (hierarchyError) {
+          console.error(`❌ Proper hierarchy service failed:`, hierarchyError);
         }
       }
 
-      console.log(`✅ Found ${states.length} administrative regions for ${country.name}`);
       return states;
     } catch (error) {
       console.error('Failed to load states:', error);
@@ -1180,72 +1169,174 @@ export class DynamicLocationService {
         return [];
       }
 
-      console.log(`📡 Querying Nominatim for cities in ${state.name} (${countryCode})...`);
-      
-      // Use Nominatim with country filter to ensure geographical containment
-      const response = await fetch(
-        `${this.API_ENDPOINTS.nominatim}/search?` +
-        `format=json&addressdetails=1&extratags=1&limit=30&` +
-        `q=${encodeURIComponent(state.name)} city&` +
-        `countrycodes=${countryCode.toLowerCase()}&` +
-        `bounded=1&` +
-        `viewbox=${state.bounds.west},${state.bounds.south},${state.bounds.east},${state.bounds.north}`
-      );
-
-      if (!response.ok) {
-        throw new Error(`Nominatim API error: ${response.status}`);
+      // First try backend WebGIS API
+      let cities: DynamicLocationNode[] = [];
+      try {
+        let relationId = (state.metadata as any)?.osmId;
+        let citiesResp: Response | null = null;
+        if (relationId) {
+          citiesResp = await fetch(`http://localhost:3001/api/admin/cities?relationId=${encodeURIComponent(String(relationId))}`);
+        } else {
+          const { south, west, north, east } = state.bounds;
+          const bbox = `${south},${west},${north},${east}`;
+          citiesResp = await fetch(`http://localhost:3001/api/admin/cities?bbox=${encodeURIComponent(bbox)}`);
+        }
+        
+        if (citiesResp && citiesResp.ok) {
+          const data = await citiesResp.json();
+          cities = (data.cities || []).map((el: any) => ({
+            id: `city_${countryCode}_${state.id}_${el.id}`,
+            name: el.name,
+            level: 'city' as const,
+            parentId: state.id,
+            hasChildren: false,
+            childrenLoaded: true,
+            childrenIds: [],
+            bounds: this.createBoundsFromPoint(el.center.lat, el.center.lng, 0.05),
+            center: { lat: el.center.lat, lng: el.center.lng },
+            population: el.population,
+            isCapital: false,
+            isPreloaded: false,
+            estimatedTiles: 800,
+            estimatedSizeMB: 16,
+            isDownloaded: false,
+            priority: 6,
+            tags: [el.place],
+            metadata: { countryCode } as any,
+            lastUpdated: Date.now(),
+            source: 'api' as const
+          }))
+          .sort((a: DynamicLocationNode, b: DynamicLocationNode) => {
+            if (a.population && b.population) return b.population - a.population;
+            return a.name.localeCompare(b.name);
+          });
+          
+          if (cities.length > 0) {
+            console.log(`✅ Backend API: Found ${cities.length} cities for ${state.name}`);
+            return cities;
+          }
+        }
+      } catch (backendError) {
+        console.warn(`⚠️ Backend cities API unavailable for ${state.name}, using fallback:`, backendError);
       }
 
-      const citiesData = await response.json();
-      console.log(`📍 Nominatim returned ${citiesData?.length || 0} cities for ${state.name}`);
-      
-      const cities: DynamicLocationNode[] = citiesData
-        .filter((city: any) => {
-          // Strict filtering to ensure proper geographical containment
-          const isCorrectCountry = city.address?.country_code?.toLowerCase() === countryCode.toLowerCase();
-          const isCorrectType = city.type === 'city' || city.type === 'town' || city.type === 'municipality';
-          const isInStateBounds = parseFloat(city.lat) >= state.bounds.south && 
-                                 parseFloat(city.lat) <= state.bounds.north &&
-                                 parseFloat(city.lon) >= state.bounds.west && 
-                                 parseFloat(city.lon) <= state.bounds.east;
-          
-          return isCorrectCountry && isCorrectType && isInStateBounds;
-        })
-        .map((city: any) => ({
-          id: `city_${countryCode}_${state.id}_${city.osm_id}`,
-          name: city.display_name.split(',')[0],
-          level: 'city' as const,
-          parentId: state.id,
-          hasChildren: false, // Simplified: no districts for cities in states
-          childrenLoaded: true,
-          childrenIds: [],
-          bounds: this.createBoundsFromPoint(parseFloat(city.lat), parseFloat(city.lon), 0.05),
-          center: {
-            lat: parseFloat(city.lat),
-            lng: parseFloat(city.lon)
-          },
-          population: parseInt(city.extratags?.population) || undefined,
-          isCapital: false, // Cities in states are never capitals (capitals are at country level)
-          isPreloaded: false,
-          estimatedTiles: 1000,
-          estimatedSizeMB: 20,
-          isDownloaded: false,
-          priority: 6,
-          tags: [city.type],
-          metadata: {
-            countryCode,
-            geonameid: parseInt(city.extratags?.geonames_id) || undefined
-          },
-          lastUpdated: Date.now(),
-          source: 'api' as const
-        }))
-        .sort((a, b) => {
-          // Sort by population, then by name
-          if (a.population && b.population) return b.population - a.population;
-          return a.name.localeCompare(b.name);
-        });
+      // FALLBACK: Use our proper hierarchy service for known regions
+      const hierarchyConfig = this.getCountryHierarchy(countryCode);
+      if (hierarchyConfig.hasProperHierarchy && countryCode === 'DK' && (state.metadata as any)?.source === 'proper-hierarchy') {
+        console.log(`🔄 Using proper hierarchy service for ${hierarchyConfig.municipalityLevel}s in ${state.name}`);
+        
+        const { geoNamesAdminHierarchyService } = await import('./geoNamesAdminHierarchyService');
+        const geonameId = (state.metadata as any)?.geonameId;
+        
+        if (geonameId) {
+          try {
+            const municipalities = await geoNamesAdminHierarchyService.getRegionMunicipalities(geonameId);
+            cities = municipalities.map((municipality) => ({
+              id: `municipality_${countryCode}_${municipality.geonameId}`,
+              name: municipality.name,
+              level: 'municipality' as const,
+              parentId: state.id,
+              hasChildren: true, // Municipalities can contain cities/towns
+              childrenLoaded: false,
+              childrenIds: [],
+              bounds: this.createBoundsFromPoint(municipality.lat, municipality.lng, 0.05),
+              center: { lat: municipality.lat, lng: municipality.lng },
+              population: municipality.population,
+              isCapital: false,
+              isPreloaded: false,
+              estimatedTiles: 800,
+              estimatedSizeMB: 16,
+              isDownloaded: false,
+              priority: 6,
+              tags: ['municipality', 'proper-hierarchy'],
+              metadata: { 
+                countryCode,
+                geonameId: municipality.geonameId,
+                adminCode2: municipality.adminCode2,
+                source: 'proper-hierarchy'
+              } as any,
+              lastUpdated: Date.now(),
+              source: 'api' as const
+            }))
+            .sort((a: DynamicLocationNode, b: DynamicLocationNode) => {
+              if (a.population && b.population) return b.population - a.population;
+              return a.name.localeCompare(b.name);
+            });
+            
+            console.log(`✅ Proper Hierarchy: Found ${cities.length} ${hierarchyConfig.municipalityLevel}s for ${state.name}`);
+          } catch (hierarchyError) {
+            console.error(`❌ Proper hierarchy service failed for ${hierarchyConfig.municipalityLevel}s:`, hierarchyError);
+          }
+        }
+      }
 
-      console.log(`✅ Found ${cities.length} valid cities for ${state.name}`);
+      // Generic fallback using Nominatim for countries without proper hierarchy
+      if (cities.length === 0 && hierarchyConfig.fallbackToNominatim) {
+        console.log(`🔄 Using Nominatim fallback for ${hierarchyConfig.municipalityLevel}s in ${state.name}, ${countryCode}`);
+        
+        try {
+          const searchQuery = `${hierarchyConfig.municipalityLevel} in ${state.name}, ${countryCode}`;
+          const response = await fetch(
+            `${this.API_ENDPOINTS.nominatim}/search?` +
+            `format=json&addressdetails=1&extratags=1&limit=25&` +
+            `q=${encodeURIComponent(searchQuery)}&` +
+            `countrycodes=${countryCode?.toLowerCase()}&` +
+            `featureType=administrative`
+          );
+          
+          if (response.ok) {
+            const searchData = await response.json();
+            cities = searchData
+              .filter((item: any) => {
+                // Filter for administrative divisions that could be municipalities/counties/districts
+                return item.class === 'boundary' && 
+                       item.type === 'administrative' &&
+                       (item.extratags?.admin_level === '3' || 
+                        item.extratags?.admin_level === '4' ||
+                        item.extratags?.admin_level === '5' ||
+                        item.extratags?.admin_level === '6');
+              })
+              .slice(0, 15) // Limit results
+              .map((item: any) => ({
+                id: `${hierarchyConfig.municipalityLevel}_${countryCode}_${item.place_id}`,
+                name: item.display_name.split(',')[0],
+                level: 'municipality' as const,
+                parentId: state.id,
+                hasChildren: true, // Administrative divisions usually contain cities
+                childrenLoaded: false,
+                childrenIds: [],
+                bounds: {
+                  north: parseFloat(item.boundingbox[1]),
+                  south: parseFloat(item.boundingbox[0]),
+                  east: parseFloat(item.boundingbox[3]),
+                  west: parseFloat(item.boundingbox[2])
+                },
+                center: { lat: parseFloat(item.lat), lng: parseFloat(item.lon) },
+                population: parseInt(item.extratags?.population || '0') || undefined,
+                isCapital: false,
+                isPreloaded: false,
+                estimatedTiles: 800,
+                estimatedSizeMB: 16,
+                isDownloaded: false,
+                priority: 6,
+                tags: [hierarchyConfig.municipalityLevel, 'nominatim-fallback'],
+                metadata: { 
+                  countryCode,
+                  placeId: item.place_id,
+                  adminLevel: item.extratags?.admin_level,
+                  source: 'nominatim'
+                } as any,
+                lastUpdated: Date.now(),
+                source: 'api' as const
+              }));
+            
+            console.log(`✅ Nominatim fallback: Found ${cities.length} ${hierarchyConfig.municipalityLevel}s for ${state.name}`);
+          }
+        } catch (nominatimError) {
+          console.error(`❌ Nominatim fallback failed for ${hierarchyConfig.municipalityLevel}s:`, nominatimError);
+        }
+      }
+
       return cities;
     } catch (error) {
       console.error('Failed to load cities for state:', error);
@@ -1253,59 +1344,201 @@ export class DynamicLocationService {
     }
   }
 
-  private async loadDistrictsForCity(city: DynamicLocationNode): Promise<DynamicLocationNode[]> {
+  /**
+   * Load cities/towns within a municipality using multiple data sources
+   */
+  private async loadCitiesForMunicipality(municipality: DynamicLocationNode): Promise<DynamicLocationNode[]> {
+    console.log(`🏛️ Loading cities/towns for municipality: ${municipality.name}`);
+    
+    const countryCode = municipality.metadata?.countryCode;
+    let cities: DynamicLocationNode[] = [];
+    
     try {
-      // Use Overpass API to get districts/neighborhoods
-      const query = `[out:json][timeout:25];
-        (
-          relation(around:10000,${city.center.lat},${city.center.lng})["admin_level"~"^(9|10|11)$"]["name"];
-        );
-        out geom;`;
-
-      const response = await fetch(this.API_ENDPOINTS.overpass, {
-        method: 'POST',
-        body: query,
-        headers: { 'Content-Type': 'text/plain' }
-      });
-
-      if (!response.ok) {
-        throw new Error(`Overpass API error: ${response.status}`);
+      // First try the proper hierarchy service for known countries
+      if (countryCode === 'DK' && municipality.metadata?.source === 'proper-hierarchy') {
+        console.log(`🔄 Using proper hierarchy service for cities in ${municipality.name}`);
+        
+        const { geoNamesAdminHierarchyService } = await import('./geoNamesAdminHierarchyService');
+        const geonameId = municipality.metadata?.geonameId;
+        
+        if (geonameId) {
+          try {
+            const municipalityCities = await geoNamesAdminHierarchyService.getMunicipalityCities(geonameId);
+            cities = municipalityCities.map((city) => ({
+              id: `city_${countryCode}_${city.geonameId}`,
+              name: city.name,
+              level: 'city' as const,
+              parentId: municipality.id,
+              hasChildren: city.population > 50000, // Large cities may have districts
+              childrenLoaded: false,
+              childrenIds: [],
+              bounds: this.createBoundsFromPoint(city.lat, city.lng, 0.01),
+              center: { lat: city.lat, lng: city.lng },
+              population: city.population,
+              isCapital: false,
+              isPreloaded: false,
+              estimatedTiles: 200,
+              estimatedSizeMB: 4,
+              isDownloaded: false,
+              priority: 7,
+              tags: ['city', 'proper-hierarchy'],
+              metadata: { 
+                countryCode,
+                geonameId: city.geonameId,
+                source: 'proper-hierarchy',
+                municipalityId: geonameId
+              } as any,
+              lastUpdated: Date.now(),
+              source: 'api' as const
+            }))
+            .sort((a: DynamicLocationNode, b: DynamicLocationNode) => {
+              if (a.population && b.population) return b.population - a.population;
+              return a.name.localeCompare(b.name);
+            });
+            
+            console.log(`✅ Proper Hierarchy: Found ${cities.length} cities for ${municipality.name}`);
+          } catch (hierarchyError) {
+            console.error(`❌ Proper hierarchy service failed for cities:`, hierarchyError);
+          }
+        }
       }
-
-      const data = await response.json();
-      const districts: DynamicLocationNode[] = data.elements
-        .filter((element: any) => element.tags && element.tags.name)
-        .map((element: any) => ({
-          id: `district_${element.id}`,
-          name: element.tags.name,
-          level: 'district' as const,
-          parentId: city.id,
-          hasChildren: false,
-          childrenLoaded: true,
-          childrenIds: [],
-          bounds: this.calculateElementBounds(element),
-          center: this.calculateElementCenter(element),
-          isCapital: false,
-          isPreloaded: false,
-          estimatedTiles: 200,
-          estimatedSizeMB: 4,
-          isDownloaded: false,
-          priority: 8,
-          tags: ['district', 'neighborhood'],
-          metadata: {
-            countryCode: city.metadata.countryCode,
-            adminLevel: parseInt(element.tags.admin_level)
-          },
-          lastUpdated: Date.now(),
-          source: 'api' as const
-        }));
-
-      return districts;
+      
+      // If no results from proper hierarchy, try Nominatim as fallback
+      if (cities.length === 0) {
+        console.log(`🔄 Using Nominatim fallback for cities in ${municipality.name}`);
+        
+        const searchQuery = `city in ${municipality.name}, ${countryCode}`;
+        const response = await fetch(
+          `${this.API_ENDPOINTS.nominatim}/search?` +
+          `format=json&addressdetails=1&extratags=1&limit=20&` +
+          `q=${encodeURIComponent(searchQuery)}&` +
+          `countrycodes=${countryCode?.toLowerCase()}&` +
+          `featureType=city,town,village`
+        );
+        
+        if (response.ok) {
+          const searchData = await response.json();
+          cities = searchData
+            .filter((item: any) => item.class === 'place' && ['city', 'town', 'village'].includes(item.type))
+            .slice(0, 10) // Limit to top 10 results
+            .map((item: any) => ({
+              id: `city_nominatim_${item.place_id}`,
+              name: item.display_name.split(',')[0],
+              level: 'city' as const,
+              parentId: municipality.id,
+              hasChildren: parseInt(item.extratags?.population || '0') > 50000,
+              childrenLoaded: false,
+              childrenIds: [],
+              bounds: {
+                north: parseFloat(item.boundingbox[1]),
+                south: parseFloat(item.boundingbox[0]),
+                east: parseFloat(item.boundingbox[3]),
+                west: parseFloat(item.boundingbox[2])
+              },
+              center: { lat: parseFloat(item.lat), lng: parseFloat(item.lon) },
+              population: parseInt(item.extratags?.population || '0') || undefined,
+              isCapital: false,
+              isPreloaded: false,
+              estimatedTiles: 200,
+              estimatedSizeMB: 4,
+              isDownloaded: false,
+              priority: 7,
+              tags: ['city', 'nominatim-fallback'],
+              metadata: { 
+                countryCode,
+                placeId: item.place_id,
+                source: 'nominatim',
+                municipalityId: municipality.id
+              } as any,
+              lastUpdated: Date.now(),
+              source: 'api' as const
+            }));
+          
+          console.log(`✅ Nominatim fallback: Found ${cities.length} cities for ${municipality.name}`);
+        }
+      }
+      
+      return cities;
     } catch (error) {
-      console.error('Failed to load districts:', error);
+      console.error('Failed to load cities for municipality:', error);
       return [];
     }
   }
+
+  /**
+   * Load districts/neighborhoods for a city
+   */
+  private async loadDistrictsForCity(city: DynamicLocationNode): Promise<DynamicLocationNode[]> {
+    console.log(`🏙️ Loading districts for city: ${city.name}`);
+    
+    const countryCode = city.metadata?.countryCode;
+    let districts: DynamicLocationNode[] = [];
+    
+    try {
+      // For now, only implement district loading for large cities
+      if (!city.population || city.population < 50000) {
+        console.log(`ℹ️ City ${city.name} too small for district subdivision (pop: ${city.population})`);
+        return [];
+      }
+      
+      // Use Nominatim to find districts/neighborhoods
+      const searchQuery = `district in ${city.name}, ${countryCode}`;
+      const response = await fetch(
+        `${this.API_ENDPOINTS.nominatim}/search?` +
+        `format=json&addressdetails=1&extratags=1&limit=15&` +
+        `q=${encodeURIComponent(searchQuery)}&` +
+        `countrycodes=${countryCode?.toLowerCase()}&` +
+        `featureType=suburb,neighbourhood,district`
+      );
+      
+      if (response.ok) {
+        const searchData = await response.json();
+        districts = searchData
+          .filter((item: any) => item.class === 'place' && ['suburb', 'neighbourhood', 'district'].includes(item.type))
+          .slice(0, 10) // Limit to top 10 results
+          .map((item: any) => ({
+            id: `district_nominatim_${item.place_id}`,
+            name: item.display_name.split(',')[0],
+            level: 'district' as const,
+            parentId: city.id,
+            hasChildren: false, // Districts are terminal nodes
+            childrenLoaded: true,
+            childrenIds: [],
+            bounds: {
+              north: parseFloat(item.boundingbox[1]),
+              south: parseFloat(item.boundingbox[0]),
+              east: parseFloat(item.boundingbox[3]),
+              west: parseFloat(item.boundingbox[2])
+            },
+            center: { lat: parseFloat(item.lat), lng: parseFloat(item.lon) },
+            population: parseInt(item.extratags?.population || '0') || undefined,
+            isCapital: false,
+            isPreloaded: false,
+            estimatedTiles: 50,
+            estimatedSizeMB: 1,
+            isDownloaded: false,
+            priority: 8,
+            tags: ['district', 'nominatim'],
+            metadata: { 
+              countryCode,
+              placeId: item.place_id,
+              source: 'nominatim',
+              cityId: city.id
+            } as any,
+            lastUpdated: Date.now(),
+            source: 'api' as const
+          }));
+        
+        console.log(`✅ Found ${districts.length} districts for ${city.name}`);
+      }
+      
+      return districts;
+    } catch (error) {
+      console.error('Failed to load districts for city:', error);
+      return [];
+    }
+  }
+
 
   // ==================== DATABASE OPERATIONS ====================
   private async saveLocation(location: DynamicLocationNode): Promise<void> {
@@ -1479,45 +1712,9 @@ export class DynamicLocationService {
     };
   }
 
-  private calculateElementBounds(element: any): { north: number; south: number; east: number; west: number } {
-    if (element.bounds) {
-      return {
-        north: element.bounds.maxlat,
-        south: element.bounds.minlat,
-        east: element.bounds.maxlon,
-        west: element.bounds.minlon
-      };
-    }
-    
-    // Fallback to center point with small bounds
-    const center = this.calculateElementCenter(element);
-    return this.createBoundsFromPoint(center.lat, center.lng, 0.1);
-  }
+  // Removed calculateElementBounds - now using backend-provided bounds
 
-  private calculateElementCenter(element: any): { lat: number; lng: number } {
-    if (element.center) {
-      return { lat: element.center.lat, lng: element.center.lon };
-    }
-    
-    if (element.lat && element.lon) {
-      return { lat: element.lat, lng: element.lon };
-    }
-    
-    // Calculate center from geometry
-    if (element.geometry && element.geometry.length > 0) {
-      const lats = element.geometry.map((g: any) => g.lat).filter((lat: number) => lat);
-      const lngs = element.geometry.map((g: any) => g.lon).filter((lng: number) => lng);
-      
-      if (lats.length > 0 && lngs.length > 0) {
-        return {
-          lat: lats.reduce((a: number, b: number) => a + b, 0) / lats.length,
-          lng: lngs.reduce((a: number, b: number) => a + b, 0) / lngs.length
-        };
-      }
-    }
-    
-    return { lat: 0, lng: 0 };
-  }
+  // Removed calculateElementCenter - centers provided by backend
 
   private createBoundsFromPoint(lat: number, lng: number, size: number): { north: number; south: number; east: number; west: number } {
     return {
@@ -1527,6 +1724,21 @@ export class DynamicLocationService {
       west: lng - size
     };
   }
+
+  // Resolve a country's Overpass area id using ISO code or name
+  // Removed resolveCountryAreaId - backend resolves areas
+
+  // Fetch and attach bounds for a list of relation elements (missing .bounds)
+  // Removed fillRelationBounds - backend includes bounds
+
+  // Prefer official/local names where available (OSM tagging best practices)
+  // Removed getPreferredName - backend normalizes names
+
+  // Normalize administrative names to include classifiers (e.g., "Region Zealand" instead of bare "Zealand")
+  // Removed normalizeAdminName - backend provides display names
+
+  // Overpass fetch with mirror rotation and basic 400/429 retry handling
+  // Removed fetchOverpass - frontend no longer calls Overpass directly
 
   // ==================== SEARCH FUNCTIONALITY ====================
   async searchLocations(query: string, maxResults = 50): Promise<DynamicLocationNode[]> {

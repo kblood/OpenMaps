@@ -545,6 +545,58 @@ export class GlobalMapPackSystem {
   }
 
   // ==================== CUSTOM POLYGON PACKS ====================
+  // Create a custom pack from a Dynamic Explorer node, using WebGIS boundary if available
+  async createPackFromDynamicNode(
+    location: { id: string; name: string; level: string; bounds: { north: number; south: number; east: number; west: number } },
+    opts?: { description?: string; zoomLevels?: number[]; layerIds?: string[]; tryBoundary?: boolean }
+  ): Promise<string> {
+    const { description, zoomLevels, layerIds, tryBoundary } = {
+      description: `Dynamically generated map pack for ${location.name}`,
+      zoomLevels: [10, 11, 12, 13, 14, 15, 16, 17, 18],
+      layerIds: ['openstreetmap'],
+      tryBoundary: true,
+      ...opts
+    };
+
+    let polygon: [number, number][] | null = null;
+    if (tryBoundary) {
+      try {
+        const { getAdminBoundaryPolygon, polygonFromBounds } = await import('./webgisService');
+        const boundary = await getAdminBoundaryPolygon(location as any);
+        if (boundary?.polygon && boundary.polygon.length >= 4) {
+          polygon = boundary.polygon;
+          console.log(`🗺️ Using boundary polygon for ${location.name} from WebGIS (${boundary.source})`);
+        } else {
+          polygon = polygonFromBounds(location.bounds);
+        }
+      } catch (e) {
+        console.warn('Boundary lookup failed, falling back to bounds polygon:', e);
+      }
+    }
+
+    if (!polygon) {
+      // Fallback to bounds rectangle
+      const { polygonFromBounds } = await import('./webgisService');
+      polygon = polygonFromBounds(location.bounds);
+    }
+
+    const packId = await this.createCustomPack(
+      `${location.name} (Dynamic)`,
+      description!,
+      polygon,
+      zoomLevels!,
+      layerIds!
+    );
+    return packId;
+  }
+
+  // Convenience: create a pack from a dynamic node and immediately download it
+  async createAndDownloadFromDynamicNode(location: { id: string; name: string; level: string; bounds: { north: number; south: number; east: number; west: number } }, opts?: { zoomLevels?: number[]; layerIds?: string[]; tryBoundary?: boolean }): Promise<string> {
+    const packId = await this.createPackFromDynamicNode(location, opts);
+    await this.downloadCustomPack(packId);
+    return packId;
+  }
+
   async createCustomPack(
     name: string,
     description: string,
@@ -1461,7 +1513,8 @@ export class GlobalMapPackSystem {
       
     } catch (error) {
       console.error('❌ Import failed:', error);
-      alert(`❌ Import Failed\n\n${error.message}\n\nPlease check that you're importing a valid OpenMaps export file.`);
+      const msg = (error as any)?.message || String(error);
+      alert(`❌ Import Failed\n\n${msg}\n\nPlease check that you're importing a valid OpenMaps export file.`);
       throw error;
     }
   }
@@ -1542,10 +1595,10 @@ export class GlobalMapPackSystem {
     const estimatedSizeMB = Math.round((estimatedTiles * 15) / 1024); // ~15KB per tile
 
     // Define limits
-    const TILE_LIMIT_WARNING = 100000;  // 100k tiles
-    const TILE_LIMIT_DANGER = 1000000;  // 1M tiles
-    const SIZE_LIMIT_WARNING = 1500;    // 1.5GB
-    const SIZE_LIMIT_DANGER = 5000;     // 5GB
+  const TILE_LIMIT_WARNING = 100000;  // 100k tiles
+  const TILE_LIMIT_DANGER = 1000000;  // 1M tiles
+  const SIZE_LIMIT_WARNING = 1500;    // 1.5GB
+  const SIZE_LIMIT_DANGER = 5000;     // 5GB
 
     let warning: string | undefined;
 
@@ -1558,7 +1611,7 @@ export class GlobalMapPackSystem {
       };
     }
 
-    if (estimatedTiles > TILE_LIMIT_DANGER) {
+  if (estimatedTiles > TILE_LIMIT_DANGER || estimatedSizeMB > SIZE_LIMIT_DANGER) {
       warning = `⚠️ VERY LARGE DOWNLOAD WARNING\n\nThis download is extremely large and may:\n• Crash your browser\n• Take hours to complete\n• Use ${estimatedSizeMB.toLocaleString()}MB of storage\n\nEstimated: ${estimatedTiles.toLocaleString()} tiles\n\nRecommendation: Create smaller custom polygons instead.`;
     } else if (estimatedTiles > TILE_LIMIT_WARNING || estimatedSizeMB > SIZE_LIMIT_WARNING) {
       warning = `⚠️ Large Download Warning\n\nThis download is quite large:\n• ${estimatedTiles.toLocaleString()} tiles\n• ~${estimatedSizeMB.toLocaleString()}MB storage\n• May take significant time\n\nContinue anyway?`;

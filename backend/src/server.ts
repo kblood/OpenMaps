@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import geocodingRoutes from './routes/geocoding';
 import routingRoutes from './routes/routing';
 import placesRoutes from './routes/places';
+import adminRoutes from './routes/admin';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './middleware/logger';
 
@@ -30,8 +31,16 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // CORS configuration
+// Allow common dev ports
+const allowedOrigins = new Set([
+  process.env.FRONTEND_URL || 'http://localhost:3000',
+  'http://localhost:3001'
+]);
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    return callback(null, true); // be permissive in dev
+  },
   credentials: true
 }));
 
@@ -51,10 +60,35 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Extended health with Overpass probe
+app.get('/healthplus', async (req, res) => {
+  try {
+    const axios = (await import('axios')).default;
+    const mirrors = [
+      'https://overpass-api.de/api/status',
+      'https://overpass.kumi.systems/api/status',
+      'https://overpass.openstreetmap.ru/api/status'
+    ];
+    const results: any[] = [];
+    for (const m of mirrors) {
+      try {
+        const r = await axios.get(m, { timeout: 8000, headers: { 'User-Agent': 'OpenMaps/1.0 (backend health)' } });
+        results.push({ url: m, ok: true, status: r.status });
+      } catch (e: any) {
+        results.push({ url: m, ok: false, status: e?.response?.status || 'ERR' });
+      }
+    }
+    res.json({ status: 'healthy', overpass: results });
+  } catch (e) {
+    res.json({ status: 'healthy', overpass: [] });
+  }
+});
+
 // API routes
 app.use('/api/geocoding', geocodingRoutes);
 app.use('/api/routing', routingRoutes);
 app.use('/api/places', placesRoutes);
+app.use('/api/admin', adminRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

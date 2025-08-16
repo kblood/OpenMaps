@@ -12,7 +12,7 @@ import {
   HIERARCHY_LEVELS 
 } from '../data/globalMapHierarchy';
 import DynamicLocationExplorer from './DynamicLocationExplorer';
-import { dynamicLocationService, DynamicLocationNode } from '../services/dynamicLocationService';
+import type { DynamicLocationNode } from '../services/dynamicLocationService';
 
 interface Props {
   isOpen: boolean;
@@ -26,11 +26,7 @@ interface Props {
   onIsDrawingPolygonChange?: (drawing: boolean) => void;
 }
 
-interface PolygonDrawingState {
-  isDrawing: boolean;
-  points: [number, number][];
-  showPreview: boolean;
-}
+// (removed unused PolygonDrawingState interface)
 
 const GlobalMapManager: React.FC<Props> = ({ 
   isOpen, 
@@ -59,7 +55,7 @@ const GlobalMapManager: React.FC<Props> = ({
 
   // Search state
   const [searchInput, setSearchInput] = useState('');
-  const [selectedLevelFilter, setSelectedLevelFilter] = useState<string>('all');
+  // (removed unused selectedLevelFilter state)
 
   // Refs
   const mapDrawingHandlerRef = useRef<((e: any) => void) | null>(null);
@@ -115,10 +111,9 @@ const GlobalMapManager: React.FC<Props> = ({
       const lng = e.latlng?.lng || e.lng;
       
       if (lat && lng) {
-        // Use functional update to get the latest points array
-        if (onPolygonPointsChange) {
-          onPolygonPointsChange(prevPoints => [...prevPoints, [lat, lng]]);
-        }
+  // Compute next points array from current props and emit (prop is not a setter)
+  const next = [...polygonPoints, [lat, lng] as [number, number]];
+  onPolygonPointsChange?.(next);
       }
     };
 
@@ -191,9 +186,7 @@ const GlobalMapManager: React.FC<Props> = ({
     globalMapPackSystem.navigateToNode(nodeId);
   };
 
-  const handleLevelNavigation = (level: string) => {
-    globalMapPackSystem.navigateToLevel(level);
-  };
+  // (removed unused handleLevelNavigation)
 
   const handleSearch = (query: string) => {
     setSearchInput(query);
@@ -228,7 +221,8 @@ const GlobalMapManager: React.FC<Props> = ({
       await globalMapPackSystem.downloadNode(nodeId);
     } catch (error) {
       console.error('Download failed:', error);
-      alert(`Download failed: ${error.message}`);
+  const msg = (error as any)?.message || String(error);
+  alert(`Download failed: ${msg}`);
     }
   };
 
@@ -263,30 +257,20 @@ const GlobalMapManager: React.FC<Props> = ({
       const proceed = confirm(confirmMessage);
       if (!proceed) return;
       
-      // Create a custom pack for this location using its bounds
-      const polygonBounds: [number, number][] = [
-        [location.bounds.west, location.bounds.south],
-        [location.bounds.east, location.bounds.south], 
-        [location.bounds.east, location.bounds.north],
-        [location.bounds.west, location.bounds.north],
-        [location.bounds.west, location.bounds.south]
-      ];
-      
-      console.log(`🔄 Creating custom pack for ${location.name}...`);
-      const packId = await globalMapPackSystem.createCustomPack(
-        `${location.name} (Dynamic)`,
-        `Dynamically generated map pack for ${location.name}`,
-        polygonBounds
-      );
-      
-      console.log(`✅ Created custom pack ${packId} for ${location.name}`);
-      
-      // Trigger a download of the created pack
-      await globalMapPackSystem.downloadHierarchicalPack(packId);
+      console.log(`🔄 Creating custom pack for ${location.name} (boundary preferred)...`);
+      // Prefer boundary-based polygon if available via WebGIS; fallback to bounds
+      const packId = await globalMapPackSystem.createAndDownloadFromDynamicNode({
+        id: location.id,
+        name: location.name,
+        level: location.level,
+        bounds: location.bounds
+      }, { tryBoundary: true });
+      console.log(`✅ Created and started download for custom pack ${packId} (${location.name})`);
       
     } catch (error) {
       console.error('Dynamic location download failed:', error);
-      alert(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  const msg = (error as any)?.message || String(error);
+  alert(`Download failed: ${msg}`);
     }
   };
 
@@ -296,7 +280,8 @@ const GlobalMapManager: React.FC<Props> = ({
       await globalMapPackSystem.exportMapPacksAsFile();
     } catch (error) {
       console.error('Export failed:', error);
-      alert(`Export failed: ${error.message}`);
+  const msg = (error as any)?.message || String(error);
+  alert(`Export failed: ${msg}`);
     }
   };
 
@@ -314,7 +299,8 @@ const GlobalMapManager: React.FC<Props> = ({
       }
     } catch (error) {
       console.error('Full export failed:', error);
-      alert(`Full export failed: ${error.message}`);
+  const msg = (error as any)?.message || String(error);
+  alert(`Full export failed: ${msg}`);
     }
   };
 
@@ -323,7 +309,8 @@ const GlobalMapManager: React.FC<Props> = ({
       await globalMapPackSystem.exportMapPackWithTiles(nodeId);
     } catch (error) {
       console.error('Map pack export failed:', error);
-      alert(`Map pack export failed: ${error.message}`);
+  const msg = (error as any)?.message || String(error);
+  alert(`Map pack export failed: ${msg}`);
     }
   };
 
@@ -332,7 +319,8 @@ const GlobalMapManager: React.FC<Props> = ({
       await globalMapPackSystem.exportCustomPackWithTiles(packId);
     } catch (error) {
       console.error('Custom pack export failed:', error);
-      alert(`Custom pack export failed: ${error.message}`);
+  const msg = (error as any)?.message || String(error);
+  alert(`Custom pack export failed: ${msg}`);
     }
   };
 
@@ -341,7 +329,8 @@ const GlobalMapManager: React.FC<Props> = ({
       await globalMapPackSystem.exportAllCustomPacks();
     } catch (error) {
       console.error('All custom packs export failed:', error);
-      alert(`All custom packs export failed: ${error.message}`);
+  const msg = (error as any)?.message || String(error);
+  alert(`All custom packs export failed: ${msg}`);
     }
   };
 
@@ -369,7 +358,8 @@ const GlobalMapManager: React.FC<Props> = ({
       document.body.removeChild(input);
     } catch (error) {
       console.error('Import failed:', error);
-      alert(`Import failed: ${error.message}`);
+  const msg = (error as any)?.message || String(error);
+  alert(`Import failed: ${msg}`);
     }
   };
 
@@ -384,7 +374,7 @@ const GlobalMapManager: React.FC<Props> = ({
       const zoomSelection = await showZoomLevelDialog(levelName, navigationState.currentLevel);
       if (!zoomSelection) return; // User cancelled
       
-      const { minZoom, maxZoom, estimatedSize } = zoomSelection;
+  const { minZoom, maxZoom } = zoomSelection;
       
       const nodeId = navigationState.currentLevel === 'world' ? 'world' : navigationState.currentNodeId;
       
@@ -585,7 +575,7 @@ const GlobalMapManager: React.FC<Props> = ({
           🌍 World
         </button>
         
-        {navigationState?.breadcrumbs.map((crumb, index) => (
+  {navigationState?.breadcrumbs.map((crumb) => (
           <React.Fragment key={crumb.id}>
             <span className="text-gray-400">→</span>
             <button
