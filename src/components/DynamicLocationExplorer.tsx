@@ -24,15 +24,15 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadChildren = useCallback(async () => {
-    if (!location.hasChildren || children.length > 0) return;
+  const loadChildren = useCallback(async (forceRefresh = false) => {
+    if (!location.hasChildren || (children.length > 0 && !forceRefresh)) return;
     
     setLoading(true);
     setError(null);
     
     try {
       console.log(`🔄 Loading children for ${location.name} (${location.level})`);
-      const childNodes = await dynamicLocationService.getChildren(location.id);
+      const childNodes = await dynamicLocationService.getChildren(location.id, forceRefresh);
       console.log(`✅ Loaded ${childNodes.length} children for ${location.name}`);
       setChildren(childNodes);
     } catch (err) {
@@ -43,6 +43,12 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
       setLoading(false);
     }
   }, [location.id, location.hasChildren, children.length]);
+
+  const handleRefreshNode = useCallback(async () => {
+    console.log(`🔄 Force refreshing ${location.name}...`);
+    setChildren([]); // Clear current children
+    await loadChildren(true); // Force refresh from API
+  }, [loadChildren, location.name]);
 
   useEffect(() => {
     if (isExpanded && location.hasChildren && !loading && children.length === 0) {
@@ -126,6 +132,19 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
         </div>
 
         <div className="flex items-center space-x-1">
+          {location.hasChildren && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRefreshNode();
+              }}
+              className="px-1 py-1 bg-gray-500 text-white rounded text-xs hover:bg-gray-600"
+              title={`Refresh ${location.name} children`}
+            >
+              🔄
+            </button>
+          )}
+          
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -147,7 +166,7 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
         <div className="text-red-500 text-xs p-2" style={indentStyle}>
           ❌ {error}
           <button 
-            onClick={loadChildren}
+            onClick={() => loadChildren(true)}
             className="ml-2 text-blue-500 hover:underline"
           >
             Retry
@@ -301,6 +320,26 @@ const DynamicLocationExplorer: React.FC<DynamicLocationExplorerProps> = ({
     }
   };
 
+  const handleRefreshData = async () => {
+    try {
+      console.log('🔄 Refreshing Dynamic Explorer data...');
+      await dynamicLocationService.clearAllCachedData();
+      
+      // Reset component state
+      setExpandedNodes(new Set(['world']));
+      setSearchQuery('');
+      setSearchResults([]);
+      
+      // Reload world location
+      const world = await dynamicLocationService.getLocation('world');
+      setWorldLocation(world);
+      
+      console.log('✅ Dynamic Explorer data refreshed');
+    } catch (error) {
+      console.error('❌ Failed to refresh data:', error);
+    }
+  };
+
   return (
     <div className={`dynamic-location-explorer ${className}`}>
       {/* Search Bar */}
@@ -354,10 +393,27 @@ const DynamicLocationExplorer: React.FC<DynamicLocationExplorerProps> = ({
         )}
       </div>
 
+      {/* Control Bar */}
+      <div className="mb-4 flex justify-between items-center">
+        <div className="text-sm text-gray-600">
+          Dynamic data from OpenStreetMap APIs
+        </div>
+        <button
+          onClick={handleRefreshData}
+          className="px-3 py-1 bg-gray-500 text-white rounded text-xs hover:bg-gray-600 transition-colors"
+          title="Clear cached data and reload with fresh API data"
+        >
+          🔄 Refresh Data
+        </button>
+      </div>
+
       {/* Hierarchy Tree */}
       <div className="border border-gray-200 rounded-lg bg-white">
-        <div className="p-2 bg-gray-50 border-b text-sm font-semibold text-gray-700">
-          🗺️ World Hierarchy (Dynamic)
+        <div className="p-2 bg-gray-50 border-b text-sm font-semibold text-gray-700 flex justify-between items-center">
+          <span>🗺️ World Hierarchy (Dynamic)</span>
+          <span className="text-xs text-gray-500">
+            {worldLocation ? 'Ready' : 'Loading...'}
+          </span>
         </div>
         
         <div className="max-h-96 overflow-y-auto">
@@ -393,7 +449,7 @@ const DynamicLocationExplorer: React.FC<DynamicLocationExplorerProps> = ({
           <div>✅ Downloaded</div>
         </div>
         <div className="mt-2 text-gray-600">
-          Data loads dynamically from OpenStreetMap APIs
+          Real geographical data via OpenStreetMap APIs with fallback data
         </div>
       </div>
     </div>

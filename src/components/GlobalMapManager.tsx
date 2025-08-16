@@ -255,47 +255,38 @@ const GlobalMapManager: React.FC<Props> = ({
     try {
       console.log('⬇️ Downloading dynamic location:', location);
       
-      // Convert DynamicLocationNode to GlobalMapNode format for compatibility
-      const globalNode: GlobalMapNode = {
-        id: location.id,
-        name: location.name,
-        level: location.level,
-        parentId: location.parentId,
-        children: location.childrenIds,
-        bounds: location.bounds,
-        center: location.center,
-        population: location.population,
-        area: location.area,
-        isCapital: location.isCapital,
-        isPreloaded: location.isPreloaded,
-        estimatedTiles: location.estimatedTiles,
-        estimatedSizeMB: location.estimatedSizeMB,
-        isDownloaded: location.isDownloaded,
-        downloadProgress: location.downloadProgress,
-        priority: location.priority,
-        tags: location.tags,
-        metadata: location.metadata
-      };
+      // For now, implement a simple tile estimation and warning
+      const confirmMessage = `Download ${location.name}?\n\n` +
+        `Estimated: ${location.estimatedTiles.toLocaleString()} tiles (~${location.estimatedSizeMB}MB)\n\n` +
+        `Note: Dynamic location downloads will create a custom pack for this area.`;
       
-      // First validate the download
-      const validation = globalMapPackSystem.validateDownloadLimits(location.id, 1, 15);
+      const proceed = confirm(confirmMessage);
+      if (!proceed) return;
       
-      if (!validation.valid) {
-        alert(validation.warning);
-        return;
-      }
+      // Create a custom pack for this location using its bounds
+      const polygonBounds: [number, number][] = [
+        [location.bounds.west, location.bounds.south],
+        [location.bounds.east, location.bounds.south], 
+        [location.bounds.east, location.bounds.north],
+        [location.bounds.west, location.bounds.north],
+        [location.bounds.west, location.bounds.south]
+      ];
       
-      if (validation.warning) {
-        const proceed = confirm(validation.warning);
-        if (!proceed) return;
-      }
-
-      // Download using the global map pack system
-      await globalMapPackSystem.downloadNode(location.id);
+      console.log(`🔄 Creating custom pack for ${location.name}...`);
+      const packId = await globalMapPackSystem.createCustomPack(
+        `${location.name} (Dynamic)`,
+        `Dynamically generated map pack for ${location.name}`,
+        polygonBounds
+      );
+      
+      console.log(`✅ Created custom pack ${packId} for ${location.name}`);
+      
+      // Trigger a download of the created pack
+      await globalMapPackSystem.downloadHierarchicalPack(packId);
       
     } catch (error) {
       console.error('Dynamic location download failed:', error);
-      alert(`Download failed: ${error.message}`);
+      alert(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 

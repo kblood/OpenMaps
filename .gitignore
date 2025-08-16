@@ -51,6 +51,15 @@ playwright-report/
 .npm/
 .yarn-integrity
 
+# PWA and Service Worker files
+sw.js
+workbox-*
+manifest-*.json
+
+# Map tiles cache (if stored locally during development)
+tiles_cache/
+offline_maps/
+
 # TypeScript
 *.tsbuildinfo
 

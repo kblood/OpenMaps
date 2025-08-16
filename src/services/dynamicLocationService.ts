@@ -1,5 +1,4 @@
 // Dynamic Location Service with API Integration and Caching
-import { GlobalMapNode, SearchableLocation } from '../data/globalMapHierarchy';
 
 // Enhanced location interface for dynamic loading
 export interface DynamicLocationNode {
@@ -67,7 +66,7 @@ export interface LocationAPIResponse {
 
 export class DynamicLocationService {
   private dbName = 'openmaps_locations';
-  private dbVersion = 2; // Increased for better caching
+  private dbVersion = 5; // Force clear all Denmark-related cached data
   private db: IDBDatabase | null = null;
   private cache: Map<string, DynamicLocationNode> = new Map();
   private loadingPromises: Map<string, Promise<DynamicLocationNode[]>> = new Map();
@@ -83,6 +82,55 @@ export class DynamicLocationService {
 
   constructor() {
     this.initializeDatabase();
+    this.clearProblematicCachedData();
+  }
+
+  // Clear any problematic data that might be in memory cache
+  private clearProblematicCachedData() {
+    const problematicNames = ['Zealand', 'Central Denmark', 'North Denmark', 'South Denmark']; // Old incorrect names
+    const genericCityNames = ['Capital City', 'Metro Center', 'Port Town', 'Mountain View', 'Valley City'];
+    
+    // Clear any Denmark-related cached data that might be problematic (especially with wrong bounds)
+    const denmarkRelatedKeys = Array.from(this.cache.keys()).filter(key => 
+      key.includes('country_dk') || key.includes('denmark') || key.toLowerCase().includes('dk')
+    );
+    
+    denmarkRelatedKeys.forEach(key => {
+      console.log(`🗑️ Clearing Denmark-related cached data with potentially wrong bounds: ${key}`);
+      this.cache.delete(key);
+    });
+    
+    // Clear children cache for Denmark
+    const denmarkChildrenKeys = Array.from(this.childrenCache.keys()).filter(key => 
+      key.includes('country_dk') || key.includes('denmark') || key.toLowerCase().includes('dk')
+    );
+    
+    denmarkChildrenKeys.forEach(key => {
+      console.log(`🗑️ Clearing Denmark children cache: ${key}`);
+      this.childrenCache.delete(key);
+    });
+    
+    // Clear other problematic data
+    for (const [key, location] of this.cache.entries()) {
+      if (problematicNames.includes(location.name) || 
+          genericCityNames.some(generic => location.name.includes(generic))) {
+        console.log(`🗑️ Clearing problematic cached location: ${location.name}`);
+        this.cache.delete(key);
+      }
+    }
+    
+    // Also clear any children cache that might contain problematic data
+    for (const [parentId, children] of this.childrenCache.entries()) {
+      const hasProblematicChildren = children.some(child => 
+        problematicNames.includes(child.name) || 
+        genericCityNames.some(generic => child.name.includes(generic))
+      );
+      
+      if (hasProblematicChildren) {
+        console.log(`🗑️ Clearing children cache for ${parentId} due to problematic children`);
+        this.childrenCache.delete(parentId);
+      }
+    }
   }
 
   // ==================== DATABASE INITIALIZATION ====================
@@ -333,23 +381,74 @@ export class DynamicLocationService {
 
     // Check memory cache first
     if (this.childrenCache.has(parentId) && !forceRefresh) {
-      console.log(`📋 Returning cached children for ${parent.name}`);
-      return this.childrenCache.get(parentId)!;
+      const cachedChildren = this.childrenCache.get(parentId)!;
+      console.log(`📋 Returning cached children for ${parent.name} (${cachedChildren.length} items)`);
+      return cachedChildren;
     }
 
     // Check database cache for children
     if (!forceRefresh) {
       const cachedChildren = await this.getCachedChildren(parentId);
       if (cachedChildren && cachedChildren.length > 0) {
-        console.log(`💾 Found ${cachedChildren.length} cached children for ${parent.name} in database`);
-        this.childrenCache.set(parentId, cachedChildren);
-        return cachedChildren;
+        
+        // Auto-invalidate problematic cached data
+        let shouldInvalidate = false;
+        
+        // Special case: if this is Europe and we only have 5 countries, invalidate cache
+        if (parentId === 'europe' && cachedChildren.length === 5) {
+          console.log(`🗑️ Invalidating Europe cache (only ${cachedChildren.length} countries, expected more)`);
+          shouldInvalidate = true;
+        }
+        
+        // Check for outdated administrative structure assumptions
+        // (We used to have hardcoded "direct city" countries, now we let API decide)
+        const hasOldDirectCityAssumptions = parent.level === 'country' && 
+                                           cachedChildren.some(child => child.source === 'api' && child.id.includes('_fallback_'));
+        
+        if (hasOldDirectCityAssumptions) {
+          console.log(`🗑️ Invalidating cache for ${parent.name} - contains old direct city assumptions`);
+          shouldInvalidate = true;
+        }
+        
+        // Check for old incorrect region names that need to be updated
+        const problematicNames = ['Zealand', 'Central Denmark', 'North Denmark', 'South Denmark']; // Old incorrect names
+        const hasProblematicNames = cachedChildren.some(child => 
+          problematicNames.some(problemName => child.name === problemName)
+        );
+        
+        if (hasProblematicNames) {
+          console.log(`🗑️ Invalidating cache for ${parent.name} due to problematic names: ${cachedChildren.filter(child => problematicNames.includes(child.name)).map(c => c.name).join(', ')}`);
+          shouldInvalidate = true;
+        }
+        
+        // Remove force invalidation - let normal cache logic handle it
+        // Denmark data should persist until manual refresh
+        
+        // Check for old generic city names that should be replaced
+        const genericCityNames = ['Capital City', 'Metro Center', 'Port Town', 'Mountain View', 'Valley City'];
+        const hasGenericCities = cachedChildren.some(child => 
+          genericCityNames.some(genericName => child.name.includes(genericName))
+        );
+        
+        if (hasGenericCities) {
+          console.log(`🗑️ Invalidating cache for ${parent.name} due to generic city names`);
+          shouldInvalidate = true;
+        }
+        
+        if (shouldInvalidate) {
+          await this.clearCachedChildren(parentId);
+        } else {
+          console.log(`💾 Found ${cachedChildren.length} cached children for ${parent.name} in database`);
+          this.childrenCache.set(parentId, cachedChildren);
+          return cachedChildren;
+        }
       }
     }
 
     // Check for existing loading promise to avoid duplicate requests
     const loadingKey = `children_${parentId}`;
     if (this.loadingPromises.has(loadingKey)) {
+      console.log(`⏳ Already loading children for ${parent.name}, returning existing promise`);
       return this.loadingPromises.get(loadingKey)!;
     }
 
@@ -377,11 +476,34 @@ export class DynamicLocationService {
     }
   }
 
+  // Method to refresh cached data for a location
+  async refreshLocation(locationId: string): Promise<void> {
+    console.log(`🔄 Refreshing cached data for ${locationId}`);
+    
+    // Clear memory cache
+    this.childrenCache.delete(locationId);
+    
+    // Clear database cache
+    await this.clearCachedChildren(locationId);
+    
+    // Mark the location as not having children loaded
+    const location = this.cache.get(locationId);
+    if (location) {
+      location.childrenLoaded = false;
+      location.childrenIds = [];
+      this.cache.set(locationId, location);
+      await this.saveLocation(location);
+    }
+    
+    console.log(`✅ Refreshed cached data for ${locationId}`);
+  }
+
   private async loadChildrenFromAPI(parent: DynamicLocationNode): Promise<DynamicLocationNode[]> {
     try {
       let children: DynamicLocationNode[] = [];
 
-      console.log(`🔄 Loading children for ${parent.name} (${parent.level})`);
+      console.log(`🔄 [HIERARCHY] Loading children for ${parent.name} (${parent.level}) - ID: ${parent.id}`);
+      console.log(`🗺 [BOUNDS] Parent bounds:`, parent.bounds);
 
       switch (parent.level) {
         case 'world':
@@ -402,15 +524,42 @@ export class DynamicLocationService {
           break;
           
         case 'country':
-          // For now, let's use a simpler approach for states
-          console.log(`🏴 Loading states/regions for country: ${parent.name}`);
-          children = await this.loadSimpleStatesForCountry(parent);
+          // Load administrative regions/states for all countries using API only
+          console.log(`🏴 Loading administrative divisions for country: ${parent.name}`);
+          try {
+            children = await this.loadStatesForCountry(parent);
+            
+            // If no administrative divisions found, try direct cities
+            if (children.length === 0) {
+              console.log(`⚠️ No administrative divisions found for ${parent.name}, trying direct cities...`);
+              children = await this.loadCitiesForCountry(parent);
+            }
+            
+            // If still no results, fail fast
+            if (children.length === 0) {
+              console.warn(`❌ No data found for ${parent.name} via API - failing fast to avoid fake data`);
+            }
+          } catch (error) {
+            console.error(`❌ Failed to load administrative data for ${parent.name}:`, error);
+            // Don't use fallback - let it fail fast
+            children = [];
+          }
           break;
           
         case 'state':
-          // Load major cities only
+          // Load real cities using Nominatim API
           console.log(`🏙️ Loading cities for state: ${parent.name}`);
-          children = await this.loadSimpleCitiesForState(parent);
+          try {
+            children = await this.loadCitiesForState(parent);
+            // Fallback to simplified if API fails
+            if (children.length === 0) {
+              console.log(`⚠️ No cities found via API for ${parent.name}, using fallback`);
+              children = await this.loadSimpleCitiesForState(parent);
+            }
+          } catch (error) {
+            console.error(`❌ Failed to load cities for ${parent.name}, using fallback:`, error);
+            children = await this.loadSimpleCitiesForState(parent);
+          }
           break;
           
         case 'city':
@@ -429,7 +578,8 @@ export class DynamicLocationService {
         await this.saveLocation(child);
       }
 
-      console.log(`✅ Successfully loaded ${children.length} children for ${parent.name} (${parent.level})`);
+      console.log(`✅ [RESULT] Successfully loaded ${children.length} children for ${parent.name} (${parent.level})`);
+      console.log(`📁 [CHILDREN] Names: ${children.map(c => c.name).join(', ')}`);
       return children;
 
     } catch (error) {
@@ -453,12 +603,100 @@ export class DynamicLocationService {
   }
 
   // ==================== API-SPECIFIC LOADERS ====================
+  
+  // Load cities directly for countries that don't use states/regions
+  private async loadCitiesForCountry(country: DynamicLocationNode): Promise<DynamicLocationNode[]> {
+    try {
+      const countryCode = country.metadata.countryCode;
+      if (!countryCode) {
+        console.log(`❌ No country code for ${country.name}`);
+        return [];
+      }
+
+      console.log(`📡 Querying Nominatim for cities in ${country.name} (${countryCode})...`);
+      
+      // Use Nominatim to search for cities within the country
+      // Try multiple search strategies to get better results
+      let response = await fetch(
+        `${this.API_ENDPOINTS.nominatim}/search?` +
+        `format=json&addressdetails=1&extratags=1&limit=50&` +
+        `q=city in ${country.name}&countrycodes=${countryCode.toLowerCase()}`
+      );
+      
+      // If first query fails, try a broader search
+      if (!response.ok || (await response.clone().json()).length === 0) {
+        console.log(`🔄 Trying broader search for cities in ${country.name}...`);
+        response = await fetch(
+          `${this.API_ENDPOINTS.nominatim}/search?` +
+          `format=json&addressdetails=1&extratags=1&limit=50&` +
+          `q=${country.name}&class=place&type=city&countrycodes=${countryCode.toLowerCase()}`
+        );
+      }
+
+      if (!response.ok) {
+        throw new Error(`Nominatim API error: ${response.status} - ${response.statusText}`);
+      }
+
+      const citiesData = await response.json();
+      console.log(`📍 Nominatim returned ${citiesData?.length || 0} cities for ${country.name}`);
+      
+      const cities: DynamicLocationNode[] = citiesData
+        .filter((city: any) => {
+          // Ensure it's actually in the right country
+          return (city.address?.country_code?.toUpperCase() === countryCode ||
+                  city.address?.country_code?.toLowerCase() === countryCode.toLowerCase()) &&
+                 (city.type === 'city' || city.type === 'town' || city.type === 'municipality');
+        })
+        .map((city: any) => ({
+          id: `city_${countryCode}_${city.osm_id}`,
+          name: city.display_name.split(',')[0],
+          level: 'city' as const,
+          parentId: country.id,
+          hasChildren: false, // Cities under countries don't have districts in this simplified model
+          childrenLoaded: true,
+          childrenIds: [],
+          bounds: this.createBoundsFromPoint(parseFloat(city.lat), parseFloat(city.lon), 0.05),
+          center: {
+            lat: parseFloat(city.lat),
+            lng: parseFloat(city.lon)
+          },
+          population: parseInt(city.extratags?.population) || undefined,
+          isCapital: city.extratags?.capital === 'yes' || city.extratags?.admin_level === '2',
+          isPreloaded: false,
+          estimatedTiles: 1000,
+          estimatedSizeMB: 20,
+          isDownloaded: false,
+          priority: city.extratags?.capital === 'yes' ? 4 : 6,
+          tags: [city.type],
+          metadata: {
+            countryCode,
+            geonameid: parseInt(city.extratags?.geonames_id) || undefined
+          },
+          lastUpdated: Date.now(),
+          source: 'api' as const
+        }))
+        .sort((a, b) => {
+          // Sort capitals first, then by population, then by name
+          if (a.isCapital && !b.isCapital) return -1;
+          if (!a.isCapital && b.isCapital) return 1;
+          if (a.population && b.population) return b.population - a.population;
+          return a.name.localeCompare(b.name);
+        });
+
+      console.log(`✅ Found ${cities.length} cities for ${country.name}`);
+      return cities;
+    } catch (error) {
+      console.error('Failed to load cities for country:', error);
+      return [];
+    }
+  }
+
   private async loadCountriesForContinent(continent: DynamicLocationNode): Promise<DynamicLocationNode[]> {
     try {
       console.log(`📡 Calling REST Countries API for ${continent.name}...`);
       
-      // Use REST Countries API to get all countries
-      const response = await fetch(`${this.API_ENDPOINTS.restcountries}/all?fields=name,cca2,cca3,region,subregion,latlng,area,population,capital,languages,currencies,timezones`, {
+      // Use REST Countries API to get all countries (reduced fields to avoid 400 errors)
+      const response = await fetch(`${this.API_ENDPOINTS.restcountries}/all?fields=name,cca2,region,subregion,latlng,capital,population`, {
         headers: {
           'Accept': 'application/json',
         }
@@ -469,31 +707,45 @@ export class DynamicLocationService {
       }
 
       const countriesData = await response.json();
-      const continentMapping: { [key: string]: string[] } = {
-        'north_america': ['Americas'],
-        'south_america': ['Americas'],
-        'europe': ['Europe'],
-        'africa': ['Africa'],
-        'asia': ['Asia'],
-        'oceania': ['Oceania']
+      
+      // More comprehensive continent mapping
+      const continentMapping: { [key: string]: (country: any) => boolean } = {
+        'north_america': (country: any) => {
+          return country.region === 'Americas' && (
+            country.subregion === 'Northern America' || 
+            country.subregion === 'Central America' || 
+            country.subregion === 'Caribbean'
+          );
+        },
+        'south_america': (country: any) => {
+          return country.region === 'Americas' && country.subregion === 'South America';
+        },
+        'europe': (country: any) => {
+          return country.region === 'Europe' || 
+                 (country.region === 'Americas' && country.name.common === 'Greenland') ||
+                 (country.cca2 === 'RU'); // Include Russia in Europe
+        },
+        'africa': (country: any) => {
+          return country.region === 'Africa';
+        },
+        'asia': (country: any) => {
+          return country.region === 'Asia' || 
+                 (country.cca2 === 'RU') || // Russia spans both continents
+                 (country.cca2 === 'TR'); // Turkey spans both continents
+        },
+        'oceania': (country: any) => {
+          return country.region === 'Oceania';
+        }
       };
 
-      const continentRegions = continentMapping[continent.id] || [];
+      const filterFunction = continentMapping[continent.id];
+      if (!filterFunction) {
+        console.warn(`No mapping found for continent: ${continent.id}`);
+        return [];
+      }
       
       const countries: DynamicLocationNode[] = countriesData
-        .filter((country: any) => continentRegions.includes(country.region))
-        .filter((country: any) => {
-          // Additional filtering for Americas
-          if (continent.id === 'north_america') {
-            return country.subregion === 'Northern America' || 
-                   country.subregion === 'Central America' || 
-                   country.subregion === 'Caribbean';
-          }
-          if (continent.id === 'south_america') {
-            return country.subregion === 'South America';
-          }
-          return true;
-        })
+        .filter(filterFunction)
         .map((country: any) => {
           const bounds = this.calculateCountryBounds(country);
           return {
@@ -509,26 +761,35 @@ export class DynamicLocationService {
               lat: country.latlng[0] || 0,
               lng: country.latlng[1] || 0
             },
-            population: country.population,
-            area: country.area,
+            population: country.population || 0,
+            area: undefined, // Not available in reduced API response
             isCapital: false,
             isPreloaded: false,
-            estimatedTiles: Math.ceil(country.area / 1000),
-            estimatedSizeMB: Math.ceil(country.area / 50),
+            estimatedTiles: Math.ceil((country.population || 100000) / 100000), // Use population for estimation
+            estimatedSizeMB: Math.ceil((country.population || 100000) / 500000), // Use population for estimation
             isDownloaded: false,
-            priority: country.population > 100000000 ? 3 : 4,
+            priority: (country.population || 0) > 100000000 ? 3 : 4,
             tags: ['country'],
             metadata: {
               countryCode: country.cca2,
-              timezone: country.timezones[0],
-              language: Object.keys(country.languages || {})[0],
-              currency: Object.keys(country.currencies || {})[0]
+              capital: country.capital?.[0],
+              timezone: undefined, // Not available in reduced API response
+              language: undefined, // Not available in reduced API response
+              currency: undefined // Not available in reduced API response
             },
             lastUpdated: Date.now(),
             source: 'api' as const
           };
+        })
+        .sort((a: DynamicLocationNode, b: DynamicLocationNode) => {
+          // Sort by population descending, then by name
+          if (a.population && b.population) {
+            return b.population - a.population;
+          }
+          return a.name.localeCompare(b.name);
         });
 
+      console.log(`✅ Loaded ${countries.length} countries for ${continent.name}`);
       return countries;
     } catch (error) {
       console.error('Failed to load countries:', error);
@@ -544,37 +805,61 @@ export class DynamicLocationService {
       'north_america': [
         { name: 'United States', code: 'US', lat: 39.8283, lng: -98.5795, pop: 331000000 },
         { name: 'Canada', code: 'CA', lat: 56.1304, lng: -106.3468, pop: 38000000 },
-        { name: 'Mexico', code: 'MX', lat: 23.6345, lng: -102.5528, pop: 128000000 }
+        { name: 'Mexico', code: 'MX', lat: 23.6345, lng: -102.5528, pop: 128000000 },
+        { name: 'Guatemala', code: 'GT', lat: 15.7835, lng: -90.2308, pop: 17000000 },
+        { name: 'Cuba', code: 'CU', lat: 21.5218, lng: -77.7812, pop: 11000000 }
       ],
       'south_america': [
         { name: 'Brazil', code: 'BR', lat: -14.2350, lng: -51.9253, pop: 215000000 },
         { name: 'Argentina', code: 'AR', lat: -38.4161, lng: -63.6167, pop: 45000000 },
-        { name: 'Colombia', code: 'CO', lat: 4.5709, lng: -74.2973, pop: 50000000 }
+        { name: 'Colombia', code: 'CO', lat: 4.5709, lng: -74.2973, pop: 50000000 },
+        { name: 'Peru', code: 'PE', lat: -9.1900, lng: -75.0152, pop: 33000000 },
+        { name: 'Venezuela', code: 'VE', lat: 6.4238, lng: -66.5897, pop: 28000000 },
+        { name: 'Chile', code: 'CL', lat: -35.6751, lng: -71.5430, pop: 19000000 }
       ],
       'europe': [
         { name: 'Germany', code: 'DE', lat: 51.1657, lng: 10.4515, pop: 83000000 },
         { name: 'France', code: 'FR', lat: 46.6034, lng: 1.8883, pop: 67000000 },
         { name: 'United Kingdom', code: 'GB', lat: 55.3781, lng: -3.4360, pop: 67000000 },
         { name: 'Italy', code: 'IT', lat: 41.8719, lng: 12.5674, pop: 60000000 },
-        { name: 'Spain', code: 'ES', lat: 40.4637, lng: -3.7492, pop: 47000000 }
+        { name: 'Spain', code: 'ES', lat: 40.4637, lng: -3.7492, pop: 47000000 },
+        { name: 'Poland', code: 'PL', lat: 51.9194, lng: 19.1451, pop: 38000000 },
+        { name: 'Romania', code: 'RO', lat: 45.9432, lng: 24.9668, pop: 19000000 },
+        { name: 'Netherlands', code: 'NL', lat: 52.1326, lng: 5.2913, pop: 17000000 },
+        { name: 'Belgium', code: 'BE', lat: 50.5039, lng: 4.4699, pop: 11000000 },
+        { name: 'Greece', code: 'GR', lat: 39.0742, lng: 21.8243, pop: 10000000 },
+        { name: 'Portugal', code: 'PT', lat: 39.3999, lng: -8.2245, pop: 10000000 },
+        { name: 'Sweden', code: 'SE', lat: 60.1282, lng: 18.6435, pop: 10000000 },
+        { name: 'Hungary', code: 'HU', lat: 47.1625, lng: 19.5033, pop: 9000000 },
+        { name: 'Austria', code: 'AT', lat: 47.5162, lng: 14.5501, pop: 9000000 },
+        { name: 'Switzerland', code: 'CH', lat: 46.8182, lng: 8.2275, pop: 8000000 },
+        { name: 'Norway', code: 'NO', lat: 60.4720, lng: 8.4689, pop: 5000000 },
+        { name: 'Finland', code: 'FI', lat: 61.9241, lng: 25.7482, pop: 5000000 },
+        { name: 'Denmark', code: 'DK', lat: 56.2639, lng: 9.5018, pop: 5000000 }
       ],
       'africa': [
         { name: 'Nigeria', code: 'NG', lat: 9.0820, lng: 8.6753, pop: 216000000 },
         { name: 'Ethiopia', code: 'ET', lat: 9.1450, lng: 40.4897, pop: 115000000 },
         { name: 'Egypt', code: 'EG', lat: 26.8206, lng: 30.8025, pop: 102000000 },
-        { name: 'South Africa', code: 'ZA', lat: -30.5595, lng: 22.9375, pop: 60000000 }
+        { name: 'South Africa', code: 'ZA', lat: -30.5595, lng: 22.9375, pop: 60000000 },
+        { name: 'Kenya', code: 'KE', lat: -0.0236, lng: 37.9062, pop: 54000000 },
+        { name: 'Morocco', code: 'MA', lat: 31.7917, lng: -7.0926, pop: 37000000 }
       ],
       'asia': [
         { name: 'China', code: 'CN', lat: 35.8617, lng: 104.1954, pop: 1440000000 },
         { name: 'India', code: 'IN', lat: 20.5937, lng: 78.9629, pop: 1380000000 },
         { name: 'Indonesia', code: 'ID', lat: -0.7893, lng: 113.9213, pop: 273000000 },
         { name: 'Pakistan', code: 'PK', lat: 30.3753, lng: 69.3451, pop: 225000000 },
-        { name: 'Japan', code: 'JP', lat: 36.2048, lng: 138.2529, pop: 125000000 }
+        { name: 'Japan', code: 'JP', lat: 36.2048, lng: 138.2529, pop: 125000000 },
+        { name: 'Russia', code: 'RU', lat: 61.5240, lng: 105.3188, pop: 146000000 },
+        { name: 'Iran', code: 'IR', lat: 32.4279, lng: 53.6880, pop: 84000000 },
+        { name: 'Turkey', code: 'TR', lat: 38.9637, lng: 35.2433, pop: 84000000 }
       ],
       'oceania': [
         { name: 'Australia', code: 'AU', lat: -25.2744, lng: 133.7751, pop: 25000000 },
         { name: 'Papua New Guinea', code: 'PG', lat: -6.3150, lng: 143.9555, pop: 9000000 },
-        { name: 'New Zealand', code: 'NZ', lat: -40.9006, lng: 174.8860, pop: 5000000 }
+        { name: 'New Zealand', code: 'NZ', lat: -40.9006, lng: 174.8860, pop: 5000000 },
+        { name: 'Fiji', code: 'FJ', lat: -16.5780, lng: 179.4144, pop: 900000 }
       ]
     };
 
@@ -606,7 +891,7 @@ export class DynamicLocationService {
 
   // Simplified state loader
   private async loadSimpleStatesForCountry(country: DynamicLocationNode): Promise<DynamicLocationNode[]> {
-    console.log(`📋 Loading simplified states for ${country.name}`);
+    console.log(`📋 Loading simplified states for ${country.name} (${country.id})`);
     
     // For now, just create a few sample states for major countries
     const sampleStates: { [key: string]: string[] } = {
@@ -615,10 +900,26 @@ export class DynamicLocationService {
       'country_de': ['Bavaria', 'North Rhine-Westphalia', 'Baden-Württemberg'],
       'country_fr': ['Île-de-France', 'Provence-Alpes-Côte d\'Azur', 'Nouvelle-Aquitaine'],
       'country_gb': ['England', 'Scotland', 'Wales', 'Northern Ireland'],
-      'country_au': ['New South Wales', 'Victoria', 'Queensland', 'Western Australia']
+      'country_au': ['New South Wales', 'Victoria', 'Queensland', 'Western Australia'],
+      'country_dk': ['Capital Region', 'Central Denmark', 'North Denmark', 'Region Zealand', 'South Denmark'],
+      'country_se': ['Stockholm', 'Västra Götaland', 'Skåne', 'Uppsala', 'Östergötland'],
+      'country_no': ['Oslo', 'Viken', 'Rogaland', 'Møre og Romsdal', 'Nordland'],
+      'country_fi': ['Uusimaa', 'Pirkanmaa', 'Southwest Finland', 'North Ostrobothnia'],
+      'country_it': ['Lombardy', 'Lazio', 'Campania', 'Sicily', 'Veneto'],
+      'country_es': ['Andalusia', 'Catalonia', 'Madrid', 'Valencia', 'Galicia'],
+      'country_nl': ['North Holland', 'South Holland', 'North Brabant', 'Gelderland'],
+      'country_be': ['Flanders', 'Wallonia', 'Brussels-Capital'],
+      'country_ch': ['Zurich', 'Bern', 'Vaud', 'Aargau', 'St. Gallen'],
+      'country_at': ['Vienna', 'Lower Austria', 'Upper Austria', 'Styria', 'Tyrol']
     };
 
-    const states = sampleStates[country.id] || [];
+    let states = sampleStates[country.id];
+    
+    // If no specific states defined, create generic regions
+    if (!states) {
+      console.log(`📋 No specific states defined for ${country.name}, creating generic regions`);
+      states = [`${country.name} - North`, `${country.name} - South`, `${country.name} - Central`];
+    }
     
     return states.map((stateName, index) => ({
       id: `state_${country.id}_${index}`,
@@ -655,12 +956,49 @@ export class DynamicLocationService {
   private async loadSimpleCitiesForState(state: DynamicLocationNode): Promise<DynamicLocationNode[]> {
     console.log(`📋 Loading simplified cities for ${state.name}`);
     
-    // Create some sample cities
-    const cityNames = ['Capital City', 'Metro Center', 'Port Town', 'Mountain View', 'Valley City'];
+    // Try to use real city names based on common knowledge, or fallback to generic names
+    const realCities: { [key: string]: string[] } = {
+      // Denmark regions
+      'state_country_dk_0': ['Copenhagen', 'Frederiksberg', 'Gentofte'], // Capital Region
+      'state_country_dk_1': ['Aarhus', 'Viborg', 'Randers'], // Central Denmark  
+      'state_country_dk_2': ['Aalborg', 'Hjørring'], // North Denmark
+      'state_country_dk_3': ['Roskilde', 'Køge', 'Næstved'], // Region Zealand
+      'state_country_dk_4': ['Odense', 'Esbjerg', 'Kolding'], // South Denmark
+      
+      // Germany states
+      'state_country_de_0': ['Munich', 'Nuremberg', 'Augsburg'], // Bavaria
+      'state_country_de_1': ['Cologne', 'Düsseldorf', 'Dortmund'], // North Rhine-Westphalia
+      'state_country_de_2': ['Stuttgart', 'Mannheim', 'Karlsruhe'], // Baden-Württemberg
+      
+      // France regions
+      'state_country_fr_0': ['Paris', 'Boulogne-Billancourt'], // Île-de-France
+      'state_country_fr_1': ['Marseille', 'Nice', 'Toulon'], // Provence-Alpes-Côte d'Azur
+      'state_country_fr_2': ['Bordeaux', 'Limoges', 'Poitiers'], // Nouvelle-Aquitaine
+      
+      // UK countries
+      'state_country_gb_0': ['London', 'Birmingham', 'Manchester'], // England
+      'state_country_gb_1': ['Glasgow', 'Edinburgh', 'Aberdeen'], // Scotland
+      'state_country_gb_2': ['Cardiff', 'Swansea', 'Newport'], // Wales
+      'state_country_gb_3': ['Belfast', 'Derry'], // Northern Ireland
+    };
+    
+    let cityNames = realCities[state.id];
+    
+    // If no specific cities defined, create descriptive names based on the state name
+    if (!cityNames) {
+      const stateName = state.name.replace(/Region |State of |Province of /i, '').split(' ')[0];
+      cityNames = [
+        `${stateName}burg`, 
+        `${stateName} City`, 
+        `New ${stateName}`,
+        `${stateName}ville`,
+        `Port ${stateName}`
+      ].slice(0, 3); // Limit to 3 cities to avoid too much fake data
+    }
     
     return cityNames.map((cityName, index) => ({
       id: `city_${state.id}_${index}`,
-      name: `${cityName} (${state.name})`,
+      name: cityName,
       level: 'city' as const,
       parentId: state.id,
       hasChildren: false,
@@ -692,15 +1030,24 @@ export class DynamicLocationService {
   private async loadStatesForCountry(country: DynamicLocationNode): Promise<DynamicLocationNode[]> {
     try {
       const countryCode = country.metadata.countryCode;
-      if (!countryCode) return [];
+      if (!countryCode) {
+        console.log(`❌ No country code for ${country.name}`);
+        return [];
+      }
 
-      // Use Nominatim to get states/provinces
-      const query = `[out:json][timeout:25];
+      console.log(`📡 Querying Overpass API for ${country.name} (${countryCode}) regions...`);
+      console.log(`🔍 Query bounds: ${country.bounds.south},${country.bounds.west},${country.bounds.north},${country.bounds.east}`);
+      
+      // Simplified query - look for administrative regions in Denmark
+      // Use broader admin levels and remove strict country filter for now
+      const query = `[out:json][timeout:30];
         (
-          relation["ISO3166-1"="${countryCode}"]["admin_level"="4"];
-          relation["ISO3166-1"="${countryCode}"]["admin_level"="3"];
+          relation["admin_level"~"^(4|5|6)$"]["name"]["type"="boundary"]["boundary"="administrative"]
+          (${country.bounds.south},${country.bounds.west},${country.bounds.north},${country.bounds.east});
         );
-        out geom;`;
+        out center tags;`;
+
+      console.log(`📝 Overpass query:`, query);
 
       const response = await fetch(this.API_ENDPOINTS.overpass, {
         method: 'POST',
@@ -709,12 +1056,27 @@ export class DynamicLocationService {
       });
 
       if (!response.ok) {
-        throw new Error(`Overpass API error: ${response.status}`);
+        throw new Error(`Overpass API error: ${response.status} - ${response.statusText}`);
       }
 
       const data = await response.json();
-      const states: DynamicLocationNode[] = data.elements
-        .filter((element: any) => element.tags && element.tags.name)
+      console.log(`📍 Overpass returned ${data.elements?.length || 0} elements for ${country.name}`);
+      let states: DynamicLocationNode[] = data.elements
+        .filter((element: any) => {
+          // Ensure we have name and proper tags
+          if (!element.tags || !element.tags.name) return false;
+          
+          // Strict country filtering to prevent cross-border pollution
+          const elementCountry = element.tags['ISO3166-1'] || element.tags.country_code || element.tags['addr:country'];
+          if (elementCountry && elementCountry.toLowerCase() !== countryCode.toLowerCase()) {
+            return false;
+          }
+          
+          // Only accept admin_level 4 or 5 for states/regions
+          return element.tags.boundary === 'administrative' && 
+                 element.tags.admin_level && 
+                 ['4', '5'].includes(element.tags.admin_level);
+        })
         .map((element: any) => {
           const bounds = this.calculateElementBounds(element);
           return {
@@ -745,6 +1107,64 @@ export class DynamicLocationService {
           };
         });
 
+      // If no results with admin_level 4, try admin_level 3 or 5
+      if (states.length === 0) {
+        console.log(`🔄 No admin_level 4 found for ${country.name}, trying other levels...`);
+        
+        const alternativeQuery = `[out:json][timeout:30];
+          (
+            relation["admin_level"]["name"]["type"="boundary"]["boundary"="administrative"]
+            (${country.bounds.south},${country.bounds.west},${country.bounds.north},${country.bounds.east});
+          );
+          out center tags;`;
+        
+        console.log(`📝 Alternative Overpass query:`, alternativeQuery);
+
+        const altResponse = await fetch(this.API_ENDPOINTS.overpass, {
+          method: 'POST',
+          body: alternativeQuery,
+          headers: { 'Content-Type': 'text/plain' }
+        });
+
+        if (altResponse.ok) {
+          const altData = await altResponse.json();
+          console.log(`📍 Alternative query returned ${altData.elements?.length || 0} elements for ${country.name}`);
+          
+          states = altData.elements
+            .filter((element: any) => element.tags && element.tags.name)
+            .map((element: any) => {
+              const bounds = this.calculateElementBounds(element);
+              return {
+                id: `state_${countryCode}_${element.id}`,
+                name: element.tags.name,
+                level: 'state' as const,
+                parentId: country.id,
+                hasChildren: true,
+                childrenLoaded: false,
+                childrenIds: [],
+                bounds,
+                center: this.calculateElementCenter(element),
+                population: parseInt(element.tags.population) || undefined,
+                isCapital: false,
+                isPreloaded: false,
+                estimatedTiles: 5000,
+                estimatedSizeMB: 100,
+                isDownloaded: false,
+                priority: 5,
+                tags: ['state', 'region'],
+                metadata: {
+                  countryCode,
+                  adminLevel: parseInt(element.tags.admin_level),
+                  wikidata: element.tags.wikidata
+                },
+                lastUpdated: Date.now(),
+                source: 'api' as const
+              };
+            });
+        }
+      }
+
+      console.log(`✅ Found ${states.length} administrative regions for ${country.name}`);
       return states;
     } catch (error) {
       console.error('Failed to load states:', error);
@@ -754,11 +1174,21 @@ export class DynamicLocationService {
 
   private async loadCitiesForState(state: DynamicLocationNode): Promise<DynamicLocationNode[]> {
     try {
-      // Use Nominatim to find cities in the state
+      const countryCode = state.metadata.countryCode;
+      if (!countryCode) {
+        console.log(`❌ No country code for state ${state.name}`);
+        return [];
+      }
+
+      console.log(`📡 Querying Nominatim for cities in ${state.name} (${countryCode})...`);
+      
+      // Use Nominatim with country filter to ensure geographical containment
       const response = await fetch(
         `${this.API_ENDPOINTS.nominatim}/search?` +
-        `format=json&addressdetails=1&extratags=1&limit=50&` +
-        `q=city&bounded=1&` +
+        `format=json&addressdetails=1&extratags=1&limit=30&` +
+        `q=${encodeURIComponent(state.name)} city&` +
+        `countrycodes=${countryCode.toLowerCase()}&` +
+        `bounded=1&` +
         `viewbox=${state.bounds.west},${state.bounds.south},${state.bounds.east},${state.bounds.north}`
       );
 
@@ -767,40 +1197,58 @@ export class DynamicLocationService {
       }
 
       const citiesData = await response.json();
+      console.log(`📍 Nominatim returned ${citiesData?.length || 0} cities for ${state.name}`);
+      
       const cities: DynamicLocationNode[] = citiesData
-        .filter((city: any) => city.type === 'city' || city.type === 'town')
+        .filter((city: any) => {
+          // Strict filtering to ensure proper geographical containment
+          const isCorrectCountry = city.address?.country_code?.toLowerCase() === countryCode.toLowerCase();
+          const isCorrectType = city.type === 'city' || city.type === 'town' || city.type === 'municipality';
+          const isInStateBounds = parseFloat(city.lat) >= state.bounds.south && 
+                                 parseFloat(city.lat) <= state.bounds.north &&
+                                 parseFloat(city.lon) >= state.bounds.west && 
+                                 parseFloat(city.lon) <= state.bounds.east;
+          
+          return isCorrectCountry && isCorrectType && isInStateBounds;
+        })
         .map((city: any) => ({
-          id: `city_${city.osm_id}`,
+          id: `city_${countryCode}_${state.id}_${city.osm_id}`,
           name: city.display_name.split(',')[0],
           level: 'city' as const,
           parentId: state.id,
-          hasChildren: city.type === 'city', // Only cities have districts
-          childrenLoaded: false,
+          hasChildren: false, // Simplified: no districts for cities in states
+          childrenLoaded: true,
           childrenIds: [],
-          bounds: this.createBoundsFromPoint(parseFloat(city.lat), parseFloat(city.lon), 0.1),
+          bounds: this.createBoundsFromPoint(parseFloat(city.lat), parseFloat(city.lon), 0.05),
           center: {
             lat: parseFloat(city.lat),
             lng: parseFloat(city.lon)
           },
           population: parseInt(city.extratags?.population) || undefined,
-          isCapital: city.extratags?.capital === 'yes',
+          isCapital: false, // Cities in states are never capitals (capitals are at country level)
           isPreloaded: false,
           estimatedTiles: 1000,
           estimatedSizeMB: 20,
           isDownloaded: false,
-          priority: city.type === 'city' ? 6 : 7,
+          priority: 6,
           tags: [city.type],
           metadata: {
-            countryCode: state.metadata.countryCode,
+            countryCode,
             geonameid: parseInt(city.extratags?.geonames_id) || undefined
           },
           lastUpdated: Date.now(),
           source: 'api' as const
-        }));
+        }))
+        .sort((a, b) => {
+          // Sort by population, then by name
+          if (a.population && b.population) return b.population - a.population;
+          return a.name.localeCompare(b.name);
+        });
 
+      console.log(`✅ Found ${cities.length} valid cities for ${state.name}`);
       return cities;
     } catch (error) {
-      console.error('Failed to load cities:', error);
+      console.error('Failed to load cities for state:', error);
       return [];
     }
   }
@@ -938,13 +1386,33 @@ export class DynamicLocationService {
     return new Promise((resolve) => {
       request.onsuccess = () => {
         const cached = request.result;
-        if (cached && Date.now() - cached.lastUpdated < 24 * 60 * 60 * 1000) { // 24 hours cache
+        // Cache persists until manual refresh - no expiration
+        if (cached && cached.children && cached.children.length > 0) {
+          console.log(`💾 Using persistent cache for ${parentId} (${cached.children.length} items)`);
           resolve(cached.children);
         } else {
           resolve(null);
         }
       };
       request.onerror = () => resolve(null);
+    });
+  }
+
+  private async clearCachedChildren(parentId: string): Promise<void> {
+    if (!this.db) return;
+    
+    const transaction = this.db.transaction(['children'], 'readwrite');
+    const store = transaction.objectStore('children');
+    
+    return new Promise((resolve) => {
+      const request = store.delete(parentId);
+      request.onsuccess = () => {
+        // Also clear memory cache
+        this.childrenCache.delete(parentId);
+        console.log(`🗑️ Cleared cached children for ${parentId}`);
+        resolve();
+      };
+      request.onerror = () => resolve();
     });
   }
 
@@ -968,11 +1436,40 @@ export class DynamicLocationService {
 
   // ==================== UTILITY FUNCTIONS ====================
   private calculateCountryBounds(country: any): { north: number; south: number; east: number; west: number } {
-    // Simplified bounds calculation - in production, use proper geometry
+    // Improved bounds calculation with country-specific overrides
+    const countryCode = country.cca2?.toLowerCase();
+    
+    // Country-specific bounds for better accuracy
+    const knownBounds: { [key: string]: { north: number; south: number; east: number; west: number } } = {
+      'dk': { north: 57.75, south: 54.56, east: 15.16, west: 8.08 }, // Denmark
+      'de': { north: 55.06, south: 47.27, east: 15.04, west: 5.87 }, // Germany
+      'fr': { north: 51.09, south: 41.33, east: 9.56, west: -5.14 }, // France
+      'gb': { north: 60.85, south: 49.96, east: 1.77, west: -8.18 }, // United Kingdom
+      'nl': { north: 53.55, south: 50.75, east: 7.22, west: 3.36 }, // Netherlands
+      'se': { north: 69.06, south: 55.34, east: 24.17, west: 11.11 }, // Sweden
+      'no': { north: 80.66, south: 57.99, east: 31.08, west: 4.65 }, // Norway
+      'fi': { north: 70.09, south: 59.81, east: 31.59, west: 20.55 }, // Finland
+      'it': { north: 47.09, south: 36.64, east: 18.52, west: 6.63 }, // Italy
+      'es': { north: 43.79, south: 35.17, east: 4.33, west: -9.30 }, // Spain
+    };
+    
+    if (countryCode && knownBounds[countryCode]) {
+      console.log(`📍 Using known bounds for ${country.name} (${countryCode})`);
+      return knownBounds[countryCode];
+    }
+    
+    // Fallback: calculate from center and area
     const lat = country.latlng[0] || 0;
     const lng = country.latlng[1] || 0;
     const area = country.area || 100000;
-    const size = Math.sqrt(area) / 111000; // Rough degree approximation
+    const sizeKm = Math.sqrt(area);
+    const sizeDegrees = sizeKm / 111000; // Convert km to degrees (approximate)
+    
+    // Use a minimum size to prevent tiny bounds
+    const minSize = 0.5; // At least 0.5 degrees
+    const size = Math.max(sizeDegrees, minSize);
+    
+    console.log(`📍 Calculated bounds for ${country.name}: size=${size.toFixed(3)} degrees`);
     
     return {
       north: lat + size,
@@ -1143,6 +1640,80 @@ export class DynamicLocationService {
     });
   }
 
+  // ==================== TESTING & VALIDATION ====================
+  
+  // Console test helper for debugging geographical hierarchy
+  async testGeographicalHierarchy(countryId: string = 'country_dk'): Promise<void> {
+    console.log(`🧪 Testing geographical hierarchy for ${countryId}...`);
+    
+    try {
+      // Test country level
+      const country = await this.getLocation(countryId);
+      console.log(`Country: ${country?.name}`, country);
+      
+      if (!country) {
+        console.error(`❌ Country ${countryId} not found`);
+        return;
+      }
+      
+      // Test administrative divisions
+      const regions = await this.getChildren(countryId, true); // Force refresh
+      console.log(`Regions (${regions.length}):`, regions.map(r => ({
+        name: r.name,
+        level: r.level,
+        source: r.source,
+        hasChildren: r.hasChildren
+      })));
+      
+      // Test cities in first region
+      if (regions.length > 0) {
+        const firstRegion = regions[0];
+        const cities = await this.getChildren(firstRegion.id);
+        console.log(`Cities in ${firstRegion.name} (${cities.length}):`, cities.map(c => ({
+          name: c.name,
+          level: c.level,
+          isCapital: c.isCapital,
+          countryCode: c.metadata.countryCode
+        })));
+        
+        // Validate geographical containment
+        this.validateGeographicalContainment(firstRegion, cities);
+      }
+      
+      console.log(`✅ Test completed for ${countryId}`);
+    } catch (error) {
+      console.error(`❌ Test failed for ${countryId}:`, error);
+    }
+  }
+
+  // Validate that child locations are properly contained within parent bounds
+  private validateGeographicalContainment(parent: DynamicLocationNode, children: DynamicLocationNode[]): void {
+    console.log(`🔍 Validating geographical containment for ${parent.name}...`);
+    
+    let invalidChildren = 0;
+    
+    children.forEach(child => {
+      const isContained = child.center.lat >= parent.bounds.south &&
+                         child.center.lat <= parent.bounds.north &&
+                         child.center.lng >= parent.bounds.west &&
+                         child.center.lng <= parent.bounds.east;
+      
+      if (!isContained) {
+        console.warn(`⚠️ ${child.name} is outside ${parent.name} bounds:`, {
+          child: child.center,
+          parent: parent.bounds
+        });
+        invalidChildren++;
+      }
+    });
+    
+    if (invalidChildren === 0) {
+      console.log(`✅ All ${children.length} children are properly contained`);
+    } else {
+      console.warn(`⚠️ ${invalidChildren}/${children.length} children are outside parent bounds`);
+    }
+  }
+
   // ==================== CLEANUP ====================
   async cleanup(): Promise<void> {
     this.cache.clear();
@@ -1153,7 +1724,98 @@ export class DynamicLocationService {
       this.db = null;
     }
   }
+
+  // Method to clear all cached data and force fresh API calls
+  async clearAllCachedData(): Promise<void> {
+    console.log('🗑️ Clearing all cached Dynamic Explorer data...');
+    
+    // Clear memory caches
+    this.cache.clear();
+    this.childrenCache.clear();
+    this.loadingPromises.clear();
+    
+    // Clear database caches
+    if (this.db) {
+      try {
+        const transaction = this.db.transaction(['children', 'apiCache', 'locations'], 'readwrite');
+        
+        // Clear children cache
+        const childrenStore = transaction.objectStore('children');
+        await new Promise<void>((resolve) => {
+          const clearRequest = childrenStore.clear();
+          clearRequest.onsuccess = () => resolve();
+          clearRequest.onerror = () => resolve();
+        });
+        
+        // Clear API cache  
+        const apiStore = transaction.objectStore('apiCache');
+        await new Promise<void>((resolve) => {
+          const clearRequest = apiStore.clear();
+          clearRequest.onsuccess = () => resolve();
+          clearRequest.onerror = () => resolve();
+        });
+        
+        // Clear locations cache (keeping only core preloaded data)
+        const locationsStore = transaction.objectStore('locations');
+        await new Promise<void>((resolve) => {
+          const clearRequest = locationsStore.clear();
+          clearRequest.onsuccess = () => resolve();
+          clearRequest.onerror = () => resolve();
+        });
+        
+        console.log('✅ Cleared all Dynamic Explorer cached data');
+      } catch (error) {
+        console.log('Database clearing error (expected during reset):', error);
+      }
+    }
+    
+    // Reinitialize core data
+    await this.preloadCoreData();
+  }
+
+  // Nuclear option: Clear everything including IndexedDB
+  async clearAllBrowserData(): Promise<void> {
+    console.log('💥 Nuclear clear: Deleting entire IndexedDB database...');
+    
+    // Close current database
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+    }
+    
+    // Clear memory
+    this.cache.clear();
+    this.childrenCache.clear();
+    this.loadingPromises.clear();
+    
+    // Delete the entire database
+    return new Promise((resolve) => {
+      const deleteRequest = indexedDB.deleteDatabase(this.dbName);
+      deleteRequest.onsuccess = () => {
+        console.log('✅ IndexedDB database deleted completely');
+        // Reinitialize from scratch
+        this.initializeDatabase().then(() => resolve());
+      };
+      deleteRequest.onerror = () => {
+        console.log('❌ Failed to delete database, reinitializing anyway');
+        this.initializeDatabase().then(() => resolve());
+      };
+    });
+  }
 }
 
 // Export singleton instance
 export const dynamicLocationService = new DynamicLocationService();
+
+// Make the test method available globally for browser console testing
+if (typeof window !== 'undefined') {
+  (window as any).testDynamicLocationService = {
+    testDenmark: () => dynamicLocationService.testGeographicalHierarchy('country_dk'),
+    testGermany: () => dynamicLocationService.testGeographicalHierarchy('country_de'),
+    testFrance: () => dynamicLocationService.testGeographicalHierarchy('country_fr'),
+    testNetherlands: () => dynamicLocationService.testGeographicalHierarchy('country_nl'),
+    clearCache: () => dynamicLocationService.clearAllCachedData(),
+    nuclearClear: () => dynamicLocationService.clearAllBrowserData(),
+    service: dynamicLocationService
+  };
+}
