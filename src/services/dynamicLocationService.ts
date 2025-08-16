@@ -67,10 +67,11 @@ export interface LocationAPIResponse {
 
 export class DynamicLocationService {
   private dbName = 'openmaps_locations';
-  private dbVersion = 1;
+  private dbVersion = 2; // Increased for better caching
   private db: IDBDatabase | null = null;
   private cache: Map<string, DynamicLocationNode> = new Map();
   private loadingPromises: Map<string, Promise<DynamicLocationNode[]>> = new Map();
+  private childrenCache: Map<string, DynamicLocationNode[]> = new Map(); // Add children cache
   
   // API endpoints for different data sources
   private readonly API_ENDPOINTS = {
@@ -99,6 +100,17 @@ export class DynamicLocationService {
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
         
+        // Clear old stores if version changed
+        if (event.oldVersion > 0) {
+          try {
+            db.deleteObjectStore('locations');
+            db.deleteObjectStore('searchIndex');
+            db.deleteObjectStore('apiCache');
+          } catch (e) {
+            console.log('Some stores did not exist, creating fresh database');
+          }
+        }
+        
         // Location nodes store
         const locationStore = db.createObjectStore('locations', { keyPath: 'id' });
         locationStore.createIndex('level', 'level');
@@ -106,6 +118,10 @@ export class DynamicLocationService {
         locationStore.createIndex('countryCode', 'metadata.countryCode');
         locationStore.createIndex('lastUpdated', 'lastUpdated');
         locationStore.createIndex('population', 'population');
+        
+        // Children cache store - for persistent parent-child relationships
+        const childrenStore = db.createObjectStore('children', { keyPath: 'parentId' });
+        childrenStore.createIndex('lastUpdated', 'lastUpdated');
         
         // Search index store
         const searchStore = db.createObjectStore('searchIndex', { keyPath: 'id' });
@@ -288,12 +304,20 @@ export class DynamicLocationService {
       throw new Error(`Parent location ${parentId} not found`);
     }
 
-    // Return cached children if already loaded and not forcing refresh
-    if (parent.childrenLoaded && !forceRefresh && parent.childrenIds.length > 0) {
-      const children = await Promise.all(
-        parent.childrenIds.map(id => this.getLocation(id))
-      );
-      return children.filter(child => child !== null) as DynamicLocationNode[];
+    // Check memory cache first
+    if (this.childrenCache.has(parentId) && !forceRefresh) {
+      console.log(`📋 Returning cached children for ${parent.name}`);
+      return this.childrenCache.get(parentId)!;
+    }
+
+    // Check database cache for children
+    if (!forceRefresh) {
+      const cachedChildren = await this.getCachedChildren(parentId);
+      if (cachedChildren && cachedChildren.length > 0) {
+        console.log(`💾 Found ${cachedChildren.length} cached children for ${parent.name} in database`);
+        this.childrenCache.set(parentId, cachedChildren);
+        return cachedChildren;
+      }
     }
 
     // Check for existing loading promise to avoid duplicate requests
@@ -315,6 +339,11 @@ export class DynamicLocationService {
       this.cache.set(parent.id, parent);
       await this.saveLocation(parent);
 
+      // Cache children in memory and database
+      this.childrenCache.set(parentId, children);
+      await this.saveChildrenCache(parentId, children);
+
+      console.log(`✅ Loaded and cached ${children.length} children for ${parent.name}`);
       return children;
     } finally {
       this.loadingPromises.delete(loadingKey);
@@ -869,6 +898,44 @@ export class DynamicLocationService {
         resolve(locations);
       };
       request.onerror = () => resolve([]);
+    });
+  }
+
+  private async getCachedChildren(parentId: string): Promise<DynamicLocationNode[] | null> {
+    if (!this.db) return null;
+    
+    const transaction = this.db.transaction(['children'], 'readonly');
+    const store = transaction.objectStore('children');
+    const request = store.get(parentId);
+    
+    return new Promise((resolve) => {
+      request.onsuccess = () => {
+        const cached = request.result;
+        if (cached && Date.now() - cached.lastUpdated < 24 * 60 * 60 * 1000) { // 24 hours cache
+          resolve(cached.children);
+        } else {
+          resolve(null);
+        }
+      };
+      request.onerror = () => resolve(null);
+    });
+  }
+
+  private async saveChildrenCache(parentId: string, children: DynamicLocationNode[]): Promise<void> {
+    if (!this.db) return;
+    
+    const transaction = this.db.transaction(['children'], 'readwrite');
+    const store = transaction.objectStore('children');
+    
+    await new Promise<void>((resolve, reject) => {
+      const request = store.put({
+        parentId,
+        children,
+        lastUpdated: Date.now()
+      });
+      
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
     });
   }
 

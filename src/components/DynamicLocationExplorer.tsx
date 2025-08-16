@@ -8,6 +8,7 @@ interface LocationTreeNodeProps {
   onDownload: (location: DynamicLocationNode) => void;
   isExpanded: boolean;
   onToggleExpand: (locationId: string) => void;
+  expandedNodes: Set<string>; // Add this to pass expanded state down
 }
 
 const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
@@ -16,7 +17,8 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
   onLocationSelect,
   onDownload,
   isExpanded,
-  onToggleExpand
+  onToggleExpand,
+  expandedNodes
 }) => {
   const [children, setChildren] = useState<DynamicLocationNode[]>([]);
   const [loading, setLoading] = useState(false);
@@ -170,8 +172,9 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
                 level={level + 1}
                 onLocationSelect={onLocationSelect}
                 onDownload={onDownload}
-                isExpanded={false} // Start collapsed
+                isExpanded={expandedNodes.has(child.id)} // Use proper expanded state
                 onToggleExpand={onToggleExpand}
+                expandedNodes={expandedNodes} // Pass down the expanded nodes
               />
             ))
           }
@@ -338,6 +341,7 @@ const DynamicLocationExplorer: React.FC<DynamicLocationExplorerProps> = ({
               onDownload={onDownload}
               isExpanded={expandedNodes.has(worldLocation.id)}
               onToggleExpand={handleToggleExpand}
+              expandedNodes={expandedNodes} // Pass the expanded nodes state
             />
           ) : (
             <div className="p-4 text-center text-gray-500">
