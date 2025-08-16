@@ -9,12 +9,6 @@ import OfflineStatusIndicator from './components/OfflineStatusIndicator';
 import { globalMapPackSystem } from './services/globalMapPackSystem';
 import { offlineTileCache } from './services/offlineTileCache';
 import { MapPackDebugger } from './components/MapPackDebugger';
-import { CachePerformanceComparison } from './components/CachePerformanceComparison';
-import { LocationExplorerComparison } from './components/LocationExplorerComparison';
-import { EnhancedLocationDemo } from './components/EnhancedLocationDemo';
-import GeoNamesLocationExplorer from './components/GeoNamesLocationExplorer';
-import ImprovedLocationDemo from './components/ImprovedLocationDemo';
-import OSMHierarchyDemo from './components/OSMHierarchyDemo';
 import ProperHierarchyDemo from './components/ProperHierarchyDemo';
 import { useGeolocation } from './hooks/useGeolocation';
 import { Location, Marker, Route } from './types';
@@ -73,12 +67,6 @@ function App() {
   const [map, setMap] = useState<LeafletMap | null>(null);
   const [recentMapClick, setRecentMapClick] = useState<{location: Location; name: string} | null>(null);
   const [showMapPacks, setShowMapPacks] = useState(false);
-  const [showCacheAnalysis, setShowCacheAnalysis] = useState(false);
-  const [showLocationExplorer, setShowLocationExplorer] = useState(false);
-  const [showEnhancedDemo, setShowEnhancedDemo] = useState(false);
-  const [showGeoNamesExplorer, setShowGeoNamesExplorer] = useState(false);
-  const [showImprovedDemo, setShowImprovedDemo] = useState(false);
-  const [showOSMDemo, setShowOSMDemo] = useState(false);
   const [showProperDemo, setShowProperDemo] = useState(false);
   const routePanelMapClickCallbackRef = useRef<((location: Location, name: string) => void) | null>(null);
   const [routeStartMarker, setRouteStartMarker] = useState<{location: Location; name: string} | null>(null);
@@ -401,60 +389,12 @@ function App() {
         
         <OfflineStatusIndicator />
         
-        {/* Cache Analysis Toggle */}
-        <button
-          onClick={() => setShowCacheAnalysis(!showCacheAnalysis)}
-          className="bg-blue-500/90 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg text-sm hover:bg-blue-600/90 transition-colors"
-        >
-          {showCacheAnalysis ? '📊 Hide Cache Analysis' : '🔍 Cache Analysis'}
-        </button>
-        
-        {/* Location Explorer Toggle */}
-        <button
-          onClick={() => setShowLocationExplorer(!showLocationExplorer)}
-          className="bg-purple-500/90 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg text-sm hover:bg-purple-600/90 transition-colors"
-        >
-          {showLocationExplorer ? '🌳 Hide Explorer Demo' : '🚀 Explorer Demo'}
-        </button>
-        
-        {/* Enhanced Location Demo Toggle */}
-        <button
-          onClick={() => setShowEnhancedDemo(!showEnhancedDemo)}
-          className="bg-emerald-500/90 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg text-sm hover:bg-emerald-600/90 transition-colors"
-        >
-          {showEnhancedDemo ? '🌍 Hide Enhanced Demo' : '🔬 Enhanced Demo'}
-        </button>
-        
-        {/* Graph-Based System Toggle - THE ULTIMATE SOLUTION! */}
-        <button
-          onClick={() => setShowImprovedDemo(!showImprovedDemo)}
-          className="bg-gradient-to-r from-blue-500 to-purple-600 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg text-sm hover:from-blue-600 hover:to-purple-700 transition-all font-bold"
-        >
-          {showImprovedDemo ? '🚀 Hide Graph System' : '✨ GRAPH SYSTEM!'}
-        </button>
-        
-        {/* GeoNames Explorer Toggle - THE SOLUTION! */}
-        <button
-          onClick={() => setShowGeoNamesExplorer(!showGeoNamesExplorer)}
-          className="bg-red-500/90 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg text-sm hover:bg-red-600/90 transition-colors"
-        >
-          {showGeoNamesExplorer ? '🛑 Hide GeoNames' : '✅ FIXED: GeoNames'}
-        </button>
-        
-        {/* OSM Hierarchy Demo - THE PROPER OSM SOLUTION! */}
-        <button
-          onClick={() => setShowOSMDemo(!showOSMDemo)}
-          className="bg-gradient-to-r from-green-500 to-emerald-600 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg text-sm hover:from-green-600 hover:to-emerald-700 transition-all font-bold"
-        >
-          {showOSMDemo ? '🌍 Hide OSM Demo' : '🚀 PROPER OSM!'}
-        </button>
-        
-        {/* Proper Hierarchy Demo - THE ULTIMATE CORRECT SOLUTION! */}
+        {/* Administrative Hierarchy Explorer */}
         <button
           onClick={() => setShowProperDemo(!showProperDemo)}
-          className="bg-gradient-to-r from-yellow-500 to-red-600 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg text-sm hover:from-yellow-600 hover:to-red-700 transition-all font-bold border-2 border-white"
+          className="bg-gradient-to-r from-blue-500 to-emerald-600 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg text-sm hover:from-blue-600 hover:to-emerald-700 transition-all font-bold"
         >
-          {showProperDemo ? '🏛️ Hide PROPER' : '🎯 ULTIMATE FIX!'}
+          {showProperDemo ? '🏛️ Hide Hierarchy Explorer' : '🌍 Administrative Hierarchy'}
         </button>
       </div>
 
@@ -471,165 +411,13 @@ function App() {
         onIsDrawingPolygonChange={setIsDrawingPolygon}
       />
 
-      {/* Cache Performance Analysis */}
-      {showCacheAnalysis && (
-        <div className="absolute inset-4 z-[1100] bg-white/95 backdrop-blur-sm rounded-lg shadow-xl overflow-auto">
-          <div className="flex justify-between items-center p-4 border-b">
-            <h2 className="text-xl font-bold text-gray-800">Cache Performance Analysis</h2>
-            <button
-              onClick={() => setShowCacheAnalysis(false)}
-              className="text-gray-500 hover:text-gray-700 text-xl"
-            >
-              ×
-            </button>
-          </div>
-          <div className="p-4">
-            <CachePerformanceComparison />
-          </div>
-        </div>
-      )}
-
-      {/* Location Explorer Comparison */}
-      {showLocationExplorer && (
-        <div className="absolute inset-4 z-[1100] bg-white/95 backdrop-blur-sm rounded-lg shadow-xl overflow-hidden">
-          <div className="flex justify-between items-center p-4 border-b">
-            <h2 className="text-xl font-bold text-gray-800">Location Explorer Comparison</h2>
-            <button
-              onClick={() => setShowLocationExplorer(false)}
-              className="text-gray-500 hover:text-gray-700 text-xl"
-            >
-              ×
-            </button>
-          </div>
-          <div className="flex-1 overflow-hidden">
-            <LocationExplorerComparison
-              onLocationSelect={(location, path) => {
-                console.log('Location selected from explorer:', { location, path });
-                // Optionally center map on selected location
-                if (location.center) {
-                  handleMapCenter(location.center, 15);
-                }
-              }}
-              onLocationDownload={(location) => {
-                console.log('Location download requested:', location);
-                // Implement download logic here
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Enhanced Location Demo */}
-      {showEnhancedDemo && (
-        <div className="absolute inset-4 z-[1100] bg-white/95 backdrop-blur-sm rounded-lg shadow-xl overflow-hidden">
-          <div className="flex justify-between items-center p-4 border-b">
-            <h2 className="text-xl font-bold text-gray-800">Enhanced Location System Demo</h2>
-            <button
-              onClick={() => setShowEnhancedDemo(false)}
-              className="text-gray-500 hover:text-gray-700 text-xl"
-            >
-              ×
-            </button>
-          </div>
-          <div className="flex-1 overflow-auto">
-            <EnhancedLocationDemo
-              onLocationSelect={(location) => {
-                console.log('Enhanced location selected:', location);
-                // Center map on selected location using centroid
-                if (location.centroid) {
-                  handleMapCenter({ lat: location.centroid[1], lng: location.centroid[0] }, 10);
-                }
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Improved Graph-Based System - THE ULTIMATE SOLUTION */}
-      {showImprovedDemo && (
-        <div className="absolute inset-4 z-[1100] bg-white/95 backdrop-blur-sm rounded-lg shadow-xl overflow-hidden">
-          <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-blue-500 to-purple-600 text-white">
-            <div>
-              <h2 className="text-xl font-bold">✨ ULTIMATE SOLUTION: Graph-Based Location Explorer</h2>
-              <p className="text-sm opacity-90">Intelligent cache sharing, no overlapping branches, 80% faster loading!</p>
-            </div>
-            <button
-              onClick={() => setShowImprovedDemo(false)}
-              className="text-white hover:text-gray-200 text-xl"
-            >
-              ×
-            </button>
-          </div>
-          <div className="flex-1 overflow-hidden">
-            <ImprovedLocationDemo
-              onLocationSelect={(location, path) => {
-                console.log('Improved system location selected:', { location, path });
-                // Center map on selected location
-                if (location.center) {
-                  handleMapCenter(location.center, 12);
-                }
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* GeoNames Explorer - THE PROPER SOLUTION */}
-      {showGeoNamesExplorer && (
-        <div className="absolute inset-4 z-[1100] bg-white/95 backdrop-blur-sm rounded-lg shadow-xl overflow-hidden">
-          <div className="flex justify-between items-center p-4 border-b">
-            <div>
-              <h2 className="text-xl font-bold text-green-800">✅ SOLUTION: GeoNames Administrative Explorer</h2>
-              <p className="text-sm text-green-600">Using authoritative government data - no more non-existent locations!</p>
-            </div>
-            <button
-              onClick={() => setShowGeoNamesExplorer(false)}
-              className="text-gray-500 hover:text-gray-700 text-xl"
-            >
-              ×
-            </button>
-          </div>
-          <div className="flex-1 overflow-auto">
-            <GeoNamesLocationExplorer />
-          </div>
-        </div>
-      )}
-
-      {/* OSM Hierarchy Demo - THE PROPER OSM SOLUTION */}
-      {showOSMDemo && (
-        <div className="absolute inset-4 z-[1100] bg-white/95 backdrop-blur-sm rounded-lg shadow-xl overflow-hidden">
-          <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-green-500 to-emerald-600 text-white">
-            <div>
-              <h2 className="text-xl font-bold">🌍 PROPER OSM SOLUTION: Real Administrative Boundaries</h2>
-              <p className="text-sm opacity-90">Testing with real OSM data, proper Overpass API, adaptive hierarchies, and geography-aware extraction!</p>
-            </div>
-            <button
-              onClick={() => setShowOSMDemo(false)}
-              className="text-white hover:text-gray-200 text-xl"
-            >
-              ×
-            </button>
-          </div>
-          <div className="flex-1 overflow-hidden">
-            <OSMHierarchyDemo
-              onLocationSelect={(location) => {
-                console.log('OSM location selected:', location);
-                if (location.center) {
-                  handleMapCenter({ lat: location.center[1], lng: location.center[0] }, 12);
-                }
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Proper Hierarchy Demo - THE ULTIMATE CORRECT SOLUTION */}
+      {/* Administrative Hierarchy Explorer */}
       {showProperDemo && (
         <div className="absolute inset-4 z-[1100] bg-white/95 backdrop-blur-sm rounded-lg shadow-xl overflow-hidden">
-          <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-yellow-500 to-red-600 text-white">
+          <div className="flex justify-between items-center p-4 border-b bg-gradient-to-r from-blue-500 to-emerald-600 text-white">
             <div>
-              <h2 className="text-xl font-bold">🎯 ULTIMATE CORRECT SOLUTION: Known Administrative Structures</h2>
-              <p className="text-sm opacity-90">Using GeoNames with predefined structures - Denmark: National → 5 Regions (incl. Nordjylland) → 98 Municipalities!</p>
+              <h2 className="text-xl font-bold">🌍 Administrative Hierarchy Explorer</h2>
+              <p className="text-sm opacity-90">Dynamic hierarchy detection with fail-fast data validation and real administrative boundaries</p>
             </div>
             <button
               onClick={() => setShowProperDemo(false)}
