@@ -1,8 +1,9 @@
-import React, { useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Polyline, Polygon, CircleMarker } from 'react-leaflet';
+import React, { useEffect, useRef } from 'react';
+import { MapContainer, Marker, Popup, useMapEvents, Polyline, Polygon, CircleMarker } from 'react-leaflet';
 import { LatLngExpression, Map as LeafletMap } from 'leaflet';
 import { Location, Marker as MarkerType, Route } from '../../types';
 import { getMapLayer } from '../../config/mapLayers';
+import { OfflineTileLayer } from '../../services/offlineTileLayer';
 import 'leaflet/dist/leaflet.css';
 
 // Fix for default markers in react-leaflet
@@ -93,6 +94,44 @@ function MapReadyHandler({ onMapReady }: { onMapReady: (map: LeafletMap) => void
   return null;
 }
 
+function OfflineTileLayerComponent({ currentLayer }: { currentLayer: string }) {
+  const map = useMapEvents({});
+  const tileLayerRef = useRef<OfflineTileLayer | null>(null);
+  
+  useEffect(() => {
+    if (!map) return;
+    
+    // Remove existing tile layer
+    if (tileLayerRef.current) {
+      map.removeLayer(tileLayerRef.current);
+    }
+    
+    // Get layer configuration
+    const tileLayerConfig = getMapLayer(currentLayer);
+    
+    // Create and add offline tile layer
+    const offlineTileLayer = new OfflineTileLayer(tileLayerConfig.url, {
+      attribution: tileLayerConfig.attribution,
+      maxZoom: tileLayerConfig.maxZoom,
+    });
+    
+    offlineTileLayer.addTo(map);
+    tileLayerRef.current = offlineTileLayer;
+    
+    console.log(`🗺️ Added offline tile layer: ${currentLayer}`);
+    
+    // Cleanup function
+    return () => {
+      if (tileLayerRef.current) {
+        map.removeLayer(tileLayerRef.current);
+        tileLayerRef.current = null;
+      }
+    };
+  }, [map, currentLayer]);
+  
+  return null;
+}
+
 function MapCenterHandler({ center, zoom }: { center: Location; zoom: number }) {
   const map = useMapEvents({});
   
@@ -134,20 +173,13 @@ const MapComponent: React.FC<MapProps> = ({
     ? route.geometry.coordinates.map(coord => [coord[1], coord[0]] as LatLngExpression)
     : [];
 
-  const tileLayer = getMapLayer(currentLayer);
-
   return (
     <MapContainer
       center={[center.lat, center.lng]}
       zoom={zoom}
       style={{ height: '100vh', width: '100%' }}
     >
-      <TileLayer
-        key={currentLayer} // Force re-render when layer changes
-        attribution={tileLayer.attribution}
-        url={tileLayer.url}
-        maxZoom={tileLayer.maxZoom}
-      />
+      <OfflineTileLayerComponent currentLayer={currentLayer} />
       
       <MapEventHandler onMapClick={onMapClick} onContextMenu={handleContextMenu} onMapMoveEnd={onMapMoveEnd} />
       <MapReadyHandler onMapReady={onMapReady} />

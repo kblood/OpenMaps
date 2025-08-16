@@ -11,6 +11,8 @@ import {
   SearchableLocation, 
   HIERARCHY_LEVELS 
 } from '../data/globalMapHierarchy';
+import DynamicLocationExplorer from './DynamicLocationExplorer';
+import { dynamicLocationService, DynamicLocationNode } from '../services/dynamicLocationService';
 
 interface Props {
   isOpen: boolean;
@@ -42,7 +44,7 @@ const GlobalMapManager: React.FC<Props> = ({
   onIsDrawingPolygonChange
 }) => {
   // State management
-  const [activeTab, setActiveTab] = useState<'hierarchy' | 'custom' | 'downloads' | 'polygon'>('hierarchy');
+  const [activeTab, setActiveTab] = useState<'hierarchy' | 'dynamic' | 'custom' | 'downloads' | 'polygon'>('dynamic');
   const [navigationState, setNavigationState] = useState<NavigationState | null>(null);
   const [customPacks, setCustomPacks] = useState<CustomMapPack[]>([]);
   const [downloads, setDownloads] = useState<Map<string, DownloadProgress>>(new Map());
@@ -51,7 +53,7 @@ const GlobalMapManager: React.FC<Props> = ({
   const [customPackForm, setCustomPackForm] = useState({
     name: '',
     description: '',
-    zoomLevels: [10, 11, 12, 13, 14, 15],
+    zoomLevels: [10, 11, 12, 13, 14, 15, 16, 17, 18],
     layerIds: ['openstreetmap']
   });
 
@@ -113,7 +115,10 @@ const GlobalMapManager: React.FC<Props> = ({
       const lng = e.latlng?.lng || e.lng;
       
       if (lat && lng) {
-        onPolygonPointsChange?.([...polygonPoints, [lat, lng]]);
+        // Use functional update to get the latest points array
+        if (onPolygonPointsChange) {
+          onPolygonPointsChange(prevPoints => [...prevPoints, [lat, lng]]);
+        }
       }
     };
 
@@ -170,7 +175,7 @@ const GlobalMapManager: React.FC<Props> = ({
       setCustomPackForm({
         name: '',
         description: '',
-        zoomLevels: [10, 11, 12, 13, 14, 15],
+        zoomLevels: [10, 11, 12, 13, 14, 15, 16, 17, 18],
         layerIds: ['openstreetmap']
       });
       clearPolygon();
@@ -207,10 +212,23 @@ const GlobalMapManager: React.FC<Props> = ({
   // ==================== DOWNLOADS ====================
   const handleDownloadNode = async (nodeId: string) => {
     try {
+      // First validate the download
+      const validation = globalMapPackSystem.validateDownloadLimits(nodeId, 1, 15);
+      
+      if (!validation.valid) {
+        alert(validation.warning);
+        return;
+      }
+      
+      if (validation.warning) {
+        const proceed = confirm(validation.warning);
+        if (!proceed) return;
+      }
+
       await globalMapPackSystem.downloadNode(nodeId);
     } catch (error) {
       console.error('Download failed:', error);
-      alert('Download failed. Please try again.');
+      alert(`Download failed: ${error.message}`);
     }
   };
 
@@ -223,37 +241,253 @@ const GlobalMapManager: React.FC<Props> = ({
     }
   };
 
+  // ==================== DYNAMIC LOCATION HANDLERS ====================
+  const handleDynamicLocationSelect = (location: DynamicLocationNode) => {
+    console.log('🗺️ Selected dynamic location:', location);
+    
+    // Navigate map to location
+    if (mapInstance) {
+      mapInstance.setView([location.center.lat, location.center.lng], 10);
+    }
+  };
+
+  const handleDynamicLocationDownload = async (location: DynamicLocationNode) => {
+    try {
+      console.log('⬇️ Downloading dynamic location:', location);
+      
+      // Convert DynamicLocationNode to GlobalMapNode format for compatibility
+      const globalNode: GlobalMapNode = {
+        id: location.id,
+        name: location.name,
+        level: location.level,
+        parentId: location.parentId,
+        children: location.childrenIds,
+        bounds: location.bounds,
+        center: location.center,
+        population: location.population,
+        area: location.area,
+        isCapital: location.isCapital,
+        isPreloaded: location.isPreloaded,
+        estimatedTiles: location.estimatedTiles,
+        estimatedSizeMB: location.estimatedSizeMB,
+        isDownloaded: location.isDownloaded,
+        downloadProgress: location.downloadProgress,
+        priority: location.priority,
+        tags: location.tags,
+        metadata: location.metadata
+      };
+      
+      // First validate the download
+      const validation = globalMapPackSystem.validateDownloadLimits(location.id, 1, 15);
+      
+      if (!validation.valid) {
+        alert(validation.warning);
+        return;
+      }
+      
+      if (validation.warning) {
+        const proceed = confirm(validation.warning);
+        if (!proceed) return;
+      }
+
+      // Download using the global map pack system
+      await globalMapPackSystem.downloadNode(location.id);
+      
+    } catch (error) {
+      console.error('Dynamic location download failed:', error);
+      alert(`Download failed: ${error.message}`);
+    }
+  };
+
+  // ==================== EXPORT/IMPORT ====================
+  const handleExportMapPacks = async () => {
+    try {
+      await globalMapPackSystem.exportMapPacksAsFile();
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert(`Export failed: ${error.message}`);
+    }
+  };
+
+  const handleExportFullDatabase = async () => {
+    try {
+      const confirmation = confirm(
+        `📦 Export Full Database\n\n` +
+        `This will export ALL downloaded tiles, which can be very large.\n` +
+        `For smaller exports, use "Export Map Packs" instead.\n\n` +
+        `Continue with full export?`
+      );
+      
+      if (confirmation) {
+        await globalMapPackSystem.exportFullDatabase();
+      }
+    } catch (error) {
+      console.error('Full export failed:', error);
+      alert(`Full export failed: ${error.message}`);
+    }
+  };
+
+  const handleExportMapPackWithTiles = async (nodeId: string) => {
+    try {
+      await globalMapPackSystem.exportMapPackWithTiles(nodeId);
+    } catch (error) {
+      console.error('Map pack export failed:', error);
+      alert(`Map pack export failed: ${error.message}`);
+    }
+  };
+
+  const handleExportCustomPack = async (packId: string) => {
+    try {
+      await globalMapPackSystem.exportCustomPackWithTiles(packId);
+    } catch (error) {
+      console.error('Custom pack export failed:', error);
+      alert(`Custom pack export failed: ${error.message}`);
+    }
+  };
+
+  const handleExportAllCustomPacks = async () => {
+    try {
+      await globalMapPackSystem.exportAllCustomPacks();
+    } catch (error) {
+      console.error('All custom packs export failed:', error);
+      alert(`All custom packs export failed: ${error.message}`);
+    }
+  };
+
+  const handleImportMapPacks = async () => {
+    try {
+      // Create file input
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.style.display = 'none';
+      
+      input.onchange = async (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) {
+          try {
+            await globalMapPackSystem.importMapPacks(file);
+          } catch (error) {
+            console.error('Import failed:', error);
+          }
+        }
+      };
+      
+      document.body.appendChild(input);
+      input.click();
+      document.body.removeChild(input);
+    } catch (error) {
+      console.error('Import failed:', error);
+      alert(`Import failed: ${error.message}`);
+    }
+  };
+
   const handleDownloadCurrentLevel = async () => {
     if (!navigationState) return;
     
     try {
-      if (navigationState.currentLevel === 'world') {
-        const confirmDownload = confirm(
-          `⚠️ Download Everything?\n\n` +
-          `This will download the entire world map including all continents, countries, states, and major cities.\n\n` +
-          `Estimated size: ~20GB\n` +
-          `This may take several hours and use significant bandwidth.\n\n` +
-          `Continue?`
-        );
-        
-        if (confirmDownload) {
-          await globalMapPackSystem.downloadNode('world');
-        }
-      } else {
-        const confirmDownload = confirm(
-          `Download ${navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1]?.name || navigationState.currentLevel}?\n\n` +
-          `This will download all sub-regions, cities, and detailed maps for this ${navigationState.currentLevel}.\n\n` +
-          `Continue?`
-        );
-        
-        if (confirmDownload) {
-          await globalMapPackSystem.downloadNode(navigationState.currentNodeId);
-        }
+      const levelName = navigationState.currentLevel === 'world' ? 'World' : 
+                       navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1]?.name || navigationState.currentLevel;
+      
+      // Show zoom level selection dialog
+      const zoomSelection = await showZoomLevelDialog(levelName, navigationState.currentLevel);
+      if (!zoomSelection) return; // User cancelled
+      
+      const { minZoom, maxZoom, estimatedSize } = zoomSelection;
+      
+      const nodeId = navigationState.currentLevel === 'world' ? 'world' : navigationState.currentNodeId;
+      
+      // Validate download first
+      const validation = globalMapPackSystem.validateDownloadLimits(nodeId, minZoom, maxZoom);
+      
+      if (!validation.valid) {
+        alert(validation.warning);
+        return;
+      }
+      
+      let confirmMessage = `📥 Download ${levelName}?\n\n` +
+        `Zoom levels: ${minZoom} - ${maxZoom}\n` +
+        `Estimated size: ~${validation.estimatedSizeMB}MB\n` +
+        `Estimated tiles: ${validation.estimatedTiles.toLocaleString()}\n\n`;
+      
+      if (validation.warning) {
+        confirmMessage += `⚠️ ${validation.warning}\n\n`;
+      }
+      
+      confirmMessage += `This will download ${navigationState.currentLevel === 'world' ? 'the entire world map' : 
+                                `all sub-regions and detailed maps for ${levelName}`}.\n\nContinue?`;
+      
+      const confirmDownload = confirm(confirmMessage);
+      
+      if (confirmDownload) {
+        await globalMapPackSystem.downloadNode(nodeId, ['openstreetmap'], minZoom, maxZoom);
       }
     } catch (error) {
       console.error('Level download failed:', error);
       alert('Download failed. Please try again.');
     }
+  };
+
+  const showZoomLevelDialog = (levelName: string, level: string): Promise<{minZoom: number, maxZoom: number, estimatedSize: number} | null> => {
+    return new Promise((resolve) => {
+      const suggestions = {
+        world: { min: 1, max: 8, size: 0.5 },
+        continent: { min: 4, max: 12, size: 2 },
+        country: { min: 6, max: 14, size: 1.5 },
+        state: { min: 8, max: 16, size: 0.8 },
+        city: { min: 10, max: 18, size: 0.3 }
+      };
+      
+      const suggestion = suggestions[level as keyof typeof suggestions] || suggestions.country;
+      
+      const userInput = prompt(
+        `🎯 Download Options for ${levelName}\n\n` +
+        `Choose zoom levels (1-18):\n\n` +
+        `Recommended for ${level}:\n` +
+        `• Min zoom: ${suggestion.min} (overview level)\n` +
+        `• Max zoom: ${suggestion.max} (detail level)\n` +
+        `• Estimated size: ~${suggestion.size}GB\n\n` +
+        `Format: "min,max" (e.g., "${suggestion.min},${suggestion.max}")\n` +
+        `Or press Cancel to abort\n\n` +
+        `Enter zoom range:`
+      );
+      
+      if (!userInput) {
+        resolve(null);
+        return;
+      }
+      
+      const parts = userInput.split(',').map(s => parseInt(s.trim()));
+      if (parts.length !== 2 || parts.some(isNaN) || parts[0] < 1 || parts[1] > 18 || parts[0] > parts[1]) {
+        alert('Invalid format. Please use "min,max" format with valid zoom levels (1-18).');
+        resolve(null);
+        return;
+      }
+      
+      const [minZoom, maxZoom] = parts;
+      const estimatedSize = calculateEstimatedSize(level, minZoom, maxZoom);
+      
+      resolve({ minZoom, maxZoom, estimatedSize });
+    });
+  };
+
+  const calculateEstimatedTiles = (level: string, minZoom: number, maxZoom: number): number => {
+    const baseMultipliers = {
+      world: 100000,
+      continent: 20000,
+      country: 10000,
+      state: 5000,
+      city: 2000
+    };
+    
+    const multiplier = baseMultipliers[level as keyof typeof baseMultipliers] || 5000;
+    const zoomRange = maxZoom - minZoom + 1;
+    return Math.floor(multiplier * Math.pow(2, zoomRange - 3));
+  };
+
+  const calculateEstimatedSize = (level: string, minZoom: number, maxZoom: number): number => {
+    const tiles = calculateEstimatedTiles(level, minZoom, maxZoom);
+    return Math.round((tiles * 15) / 1024 / 1024 * 100) / 100; // ~15KB per tile average
   };
 
   const handleLoadMoreCities = async () => {
@@ -583,7 +817,17 @@ const GlobalMapManager: React.FC<Props> = ({
             )}
             
             {pack.isDownloaded && (
-              <span className="text-green-500 text-sm">✓ Downloaded</span>
+              <>
+                <span className="text-green-500 text-sm">✓ Downloaded</span>
+                <button
+                  onClick={() => handleExportCustomPack(pack.id)}
+                  className="px-3 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600 flex items-center space-x-1"
+                  title={`Export ${pack.name} with tiles`}
+                >
+                  <span>📦</span>
+                  <span>Export</span>
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -630,7 +874,8 @@ const GlobalMapManager: React.FC<Props> = ({
         {/* Tab Navigation */}
         <div className="flex border-b border-gray-200">
           {[
-            { id: 'hierarchy', label: '🌍 World Hierarchy', icon: '🗺️' },
+            { id: 'dynamic', label: '🌐 Dynamic Explorer', icon: '🔄' },
+            { id: 'hierarchy', label: '🌍 Static Hierarchy', icon: '🗺️' },
             { id: 'custom', label: 'Custom Packs', icon: '📍' },
             { id: 'polygon', label: 'Draw Area', icon: '✏️' },
             { id: 'downloads', label: 'Downloads', icon: '⬇️' }
@@ -651,7 +896,27 @@ const GlobalMapManager: React.FC<Props> = ({
 
         {/* Content */}
         <div className="flex-1 overflow-hidden">
-          {/* Hierarchy Tab */}
+          {/* Dynamic Explorer Tab */}
+          {activeTab === 'dynamic' && (
+            <div className="h-full overflow-y-auto p-4">
+              <h3 className="font-semibold text-lg mb-4">🌐 Dynamic Location Explorer</h3>
+              
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                <div className="text-sm text-blue-800">
+                  <strong>✨ New Dynamic System:</strong> Loads all world locations on-demand from OpenStreetMap APIs.
+                  Get real-time data for all 190+ countries, states, cities, and districts worldwide!
+                </div>
+              </div>
+              
+              <DynamicLocationExplorer
+                onLocationSelect={handleDynamicLocationSelect}
+                onDownload={handleDynamicLocationDownload}
+                className="h-full"
+              />
+            </div>
+          )}
+
+          {/* Static Hierarchy Tab */}
           {activeTab === 'hierarchy' && (
             <div className="h-full overflow-y-auto p-4">
               {renderLevelSelector()}
@@ -746,6 +1011,26 @@ const GlobalMapManager: React.FC<Props> = ({
                   ✏️ Draw New Area
                 </button>
               </div>
+
+              {/* Custom Pack Export Section */}
+              {customPacks.length > 0 && (
+                <div className="bg-blue-50 rounded-lg p-4 mb-6">
+                  <h4 className="font-semibold text-md mb-3">📦 Export Custom Packs</h4>
+                  <div className="grid grid-cols-1 gap-2">
+                    <button
+                      onClick={handleExportAllCustomPacks}
+                      className="px-4 py-2 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 flex items-center justify-center space-x-2"
+                    >
+                      <span>📤</span>
+                      <span>Export All Custom Packs ({customPacks.length})</span>
+                    </button>
+                  </div>
+                  <div className="text-xs text-gray-600 mt-2">
+                    <p><strong>Export All:</strong> Saves all your custom polygon areas with their tiles</p>
+                    <p><strong>Individual Export:</strong> Use the 📦 button next to each pack</p>
+                  </div>
+                </div>
+              )}
               
               <div className="space-y-4">
                 {customPacks.length === 0 ? (
@@ -945,10 +1230,124 @@ const GlobalMapManager: React.FC<Props> = ({
           {/* Downloads Tab */}
           {activeTab === 'downloads' && (
             <div className="h-full overflow-y-auto p-4">
-              <h3 className="font-semibold text-lg mb-4">📥 Active Downloads</h3>
+              <h3 className="font-semibold text-lg mb-4">📥 Downloads & Backup</h3>
+              
+              {/* Export/Import Section */}
+              <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                <h4 className="font-semibold text-md mb-3">💾 Backup & Transfer</h4>
+                <div className="grid grid-cols-1 gap-2">
+                  <button
+                    onClick={handleExportMapPacks}
+                    className="px-4 py-2 bg-green-500 text-white rounded text-sm hover:bg-green-600 flex items-center justify-center space-x-2"
+                  >
+                    <span>📋</span>
+                    <span>Export Download List</span>
+                  </button>
+                  
+                  <button
+                    onClick={handleExportFullDatabase}
+                    className="px-4 py-2 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 flex items-center justify-center space-x-2"
+                  >
+                    <span>🗄️</span>
+                    <span>Export All Tiles</span>
+                  </button>
+                  
+                  <button
+                    onClick={handleImportMapPacks}
+                    className="px-4 py-2 bg-orange-500 text-white rounded text-sm hover:bg-orange-600 flex items-center justify-center space-x-2"
+                  >
+                    <span>📥</span>
+                    <span>Import Map Packs</span>
+                  </button>
+                </div>
+                
+                <div className="text-xs text-gray-600 mt-2">
+                  <p><strong>Download List:</strong> Metadata only (tiny file, ~KB)</p>
+                  <p><strong>All Tiles:</strong> Complete map data (large file, ~MB-GB)</p>
+                  <p><strong>Import:</strong> Restore from any exported file</p>
+                  <p><strong>💡 Tip:</strong> Export individual regions/custom packs using their 📦 button</p>
+                </div>
+              </div>
+
+              {/* Downloaded Regions Section */}
+              <div className="bg-green-50 rounded-lg p-4 mb-6">
+                <h4 className="font-semibold text-md mb-3">✅ Downloaded Regions</h4>
+                <div className="space-y-2">
+                  {globalMapPackSystem.getGlobalNodes()
+                    .filter(node => node.isDownloaded)
+                    .map(node => (
+                      <div key={node.id} className="flex items-center justify-between bg-white rounded p-2 border border-green-200">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-lg">
+                            {node.level === 'world' ? '🌍' : 
+                             node.level === 'continent' ? '🌎' : 
+                             node.level === 'country' ? '🏴' : 
+                             node.level === 'state' ? '🗺️' : '🏙️'}
+                          </span>
+                          <div>
+                            <div className="font-medium text-sm">{node.name}</div>
+                            <div className="text-xs text-gray-500">
+                              {node.level} • ~{node.estimatedSizeMB}MB
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleExportMapPackWithTiles(node.id)}
+                          className="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600 flex items-center space-x-1"
+                          title={`Export ${node.name} with tiles`}
+                        >
+                          <span>📦</span>
+                          <span>Export</span>
+                        </button>
+                      </div>
+                    ))
+                  }
+                  
+                  {globalMapPackSystem.getGlobalNodes().filter(node => node.isDownloaded).length === 0 && (
+                    <div className="text-center text-gray-500 py-4">
+                      No regions downloaded yet
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Downloaded Custom Packs Section */}
+              {customPacks.filter(pack => pack.isDownloaded).length > 0 && (
+                <div className="bg-purple-50 rounded-lg p-4 mb-6">
+                  <h4 className="font-semibold text-md mb-3">📍 Downloaded Custom Packs</h4>
+                  <div className="space-y-2">
+                    {customPacks
+                      .filter(pack => pack.isDownloaded)
+                      .map(pack => (
+                        <div key={pack.id} className="flex items-center justify-between bg-white rounded p-2 border border-purple-200">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-lg">📍</span>
+                            <div>
+                              <div className="font-medium text-sm">{pack.name}</div>
+                              <div className="text-xs text-gray-500">
+                                Custom Area • {pack.polygon.length} points • ~{pack.estimatedSizeMB}MB
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleExportCustomPack(pack.id)}
+                            className="px-2 py-1 bg-purple-500 text-white rounded text-xs hover:bg-purple-600 flex items-center space-x-1"
+                            title={`Export ${pack.name} with tiles`}
+                          >
+                            <span>📦</span>
+                            <span>Export</span>
+                          </button>
+                        </div>
+                      ))
+                    }
+                  </div>
+                </div>
+              )}
+              
+              <h4 className="font-semibold text-md mb-3">⬇️ Active Downloads</h4>
               
               {downloads.size === 0 ? (
-                <div className="text-center py-12">
+                <div className="text-center py-8">
                   <p className="text-gray-500">No active downloads</p>
                 </div>
               ) : (

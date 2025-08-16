@@ -226,17 +226,23 @@ export class GlobalMapPackSystem {
   }
 
   // ==================== DOWNLOAD SYSTEM ====================
-  async downloadNode(nodeId: string, layerIds: string[] = ['openstreetmap']): Promise<void> {
+  async downloadNode(nodeId: string, layerIds: string[] = ['openstreetmap'], minZoom: number = 1, maxZoom: number = 18): Promise<void> {
     const node = getNodeById(nodeId, this.globalNodes);
     if (!node) {
       throw new Error(`Node ${nodeId} not found`);
     }
 
-    console.log(`🌍 Starting download for ${node.name} (${node.estimatedTiles} tiles, ~${node.estimatedSizeMB}MB)`);
+    // Validate download limits
+    const validation = this.validateDownloadLimits(nodeId, minZoom, maxZoom);
+    if (!validation.valid) {
+      throw new Error(validation.warning || 'Download not allowed');
+    }
+
+    console.log(`🌍 Starting download for ${node.name} (${validation.estimatedTiles} tiles, ~${validation.estimatedSizeMB}MB)`);
 
     const progress: DownloadProgress = {
       current: 0,
-      total: node.estimatedTiles,
+      total: validation.estimatedTiles,
       nodeId,
       status: 'downloading',
       speed: 0,
@@ -247,7 +253,7 @@ export class GlobalMapPackSystem {
     this.notifyDownloadProgress(progress);
 
     try {
-      const tiles = this.generateTileList(node.bounds, layerIds, 1, 15);
+      const tiles = this.generateTileList(node.bounds, layerIds, minZoom, maxZoom);
       await this.downloadTilesParallel(tiles, nodeId, progress);
       
       // Update node status
@@ -408,6 +414,20 @@ export class GlobalMapPackSystem {
 
   private async downloadSingleTile(tile: TileInfo, nodeId: string): Promise<void> {
     try {
+      // Check if tile already exists
+      const existingTile = await this.getTile(tile.x, tile.y, tile.z, tile.layerId);
+      if (existingTile) {
+        console.log(`📦 Reusing existing tile ${tile.z}/${tile.x}/${tile.y}`);
+        // Update the tile to include this nodeId if not already included
+        if (!existingTile.nodeIds.includes(nodeId)) {
+          existingTile.nodeIds.push(nodeId);
+          existingTile.lastAccessed = Date.now();
+          existingTile.accessCount = (existingTile.accessCount || 0) + 1;
+          await this.saveTile(existingTile);
+        }
+        return;
+      }
+
       const response = await fetch(tile.url);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -418,7 +438,8 @@ export class GlobalMapPackSystem {
         ...tile,
         data: blob,
         downloaded: true,
-        nodeIds: [nodeId],
+        nodeIds: tile.nodeIds ? [...tile.nodeIds, nodeId] : [nodeId],
+        customPackIds: tile.customPackIds || [],
         downloadedAt: Date.now(),
         lastAccessed: Date.now(),
         accessCount: 1
@@ -431,12 +452,104 @@ export class GlobalMapPackSystem {
     }
   }
 
+  private async downloadCustomPackTiles(tiles: TileInfo[], packId: string, progress: DownloadProgress): Promise<void> {
+    const chunkSize = this.maxConcurrentDownloads;
+    let completed = 0;
+    const startTime = Date.now();
+
+    for (let i = 0; i < tiles.length; i += chunkSize) {
+      // Check if download was cancelled or paused
+      if (this.isDownloadCancelled(packId)) {
+        throw new Error('Download was cancelled');
+      }
+      
+      const currentProgress = this.downloadQueue.get(packId);
+      if (currentProgress?.status === 'paused') {
+        console.log(`⏸️ Custom pack download paused, waiting...`);
+        // Wait for resume or cancel
+        while (currentProgress.status === 'paused' && !this.isDownloadCancelled(packId)) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        if (this.isDownloadCancelled(packId)) {
+          throw new Error('Download was cancelled');
+        }
+      }
+
+      const chunk = tiles.slice(i, i + chunkSize);
+      const downloadPromises = chunk.map(tile => this.downloadSingleCustomPackTile(tile, packId));
+
+      const results = await Promise.allSettled(downloadPromises);
+      
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          completed++;
+        } else {
+          console.warn(`Failed to download custom pack tile:`, chunk[index], result.reason);
+        }
+      });
+
+      // Update progress
+      progress.current = completed;
+      const elapsed = (Date.now() - startTime) / 1000;
+      progress.speed = completed / elapsed;
+      progress.estimatedTimeRemaining = (progress.total - completed) / progress.speed;
+
+      this.notifyDownloadProgress(progress);
+
+      // Small delay to prevent overwhelming the server
+      if (i + chunkSize < tiles.length) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+  }
+
+  private async downloadSingleCustomPackTile(tile: TileInfo, packId: string): Promise<void> {
+    try {
+      // Check if tile already exists
+      const existingTile = await this.getTile(tile.x, tile.y, tile.z, tile.layerId);
+      if (existingTile) {
+        console.log(`📦 Reusing existing tile for custom pack ${tile.z}/${tile.x}/${tile.y}`);
+        // Update the tile to include this custom pack ID
+        if (!existingTile.customPackIds.includes(packId)) {
+          existingTile.customPackIds.push(packId);
+          existingTile.lastAccessed = Date.now();
+          existingTile.accessCount = (existingTile.accessCount || 0) + 1;
+          await this.saveTile(existingTile);
+        }
+        return;
+      }
+
+      const response = await fetch(tile.url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const tileData = {
+        ...tile,
+        data: blob,
+        downloaded: true,
+        nodeIds: [],
+        customPackIds: [packId],
+        downloadedAt: Date.now(),
+        lastAccessed: Date.now(),
+        accessCount: 1
+      };
+
+      await this.saveTile(tileData);
+    } catch (error) {
+      console.warn(`Failed to download custom pack tile ${tile.z}/${tile.x}/${tile.y}:`, error);
+      throw error;
+    }
+  }
+
   // ==================== CUSTOM POLYGON PACKS ====================
   async createCustomPack(
     name: string,
     description: string,
     polygon: [number, number][],
-    zoomLevels: number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    zoomLevels: number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
     layerIds: string[] = ['openstreetmap']
   ): Promise<string> {
     // Calculate bounds from polygon
@@ -529,7 +642,7 @@ export class GlobalMapPackSystem {
 
     try {
       const tiles = this.generatePolygonTileList(pack.polygon, pack.layerIds, pack.zoomLevels);
-      await this.downloadTilesParallel(tiles, packId, progress);
+      await this.downloadCustomPackTiles(tiles, packId, progress);
       
       // Update pack status
       const packIndex = this.customPacks.findIndex(p => p.id === packId);
@@ -595,6 +708,19 @@ export class GlobalMapPackSystem {
   }
 
   // ==================== DATABASE OPERATIONS ====================
+  private async getTile(x: number, y: number, z: number, layerId: string): Promise<any | null> {
+    if (!this.db) return null;
+    
+    const transaction = this.db.transaction(['tiles'], 'readonly');
+    const store = transaction.objectStore('tiles');
+    const request = store.get([x, y, z, layerId]);
+    
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
   private async saveGlobalNode(node: GlobalMapNode): Promise<void> {
     if (!this.db) return;
     
@@ -718,6 +844,732 @@ export class GlobalMapPackSystem {
 
   getHierarchyLevels() {
     return HIERARCHY_LEVELS;
+  }
+
+  // ==================== EXPORT/IMPORT SYSTEM ====================
+  async exportMapPacks(): Promise<{
+    globalNodes: GlobalMapNode[];
+    customPacks: CustomMapPack[];
+    tilesCount: number;
+    exportedAt: Date;
+  }> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    try {
+      // Get all downloaded global nodes
+      const downloadedNodes = this.globalNodes.filter(node => node.isDownloaded);
+      
+      // Get all custom packs
+      const customPacks = [...this.customPacks];
+      
+      // Count tiles
+      const transaction = this.db.transaction(['tiles'], 'readonly');
+      const store = transaction.objectStore('tiles');
+      const countRequest = store.count();
+      
+      const tilesCount = await new Promise<number>((resolve, reject) => {
+        countRequest.onsuccess = () => resolve(countRequest.result);
+        countRequest.onerror = () => reject(countRequest.error);
+      });
+
+      const exportData = {
+        globalNodes: downloadedNodes,
+        customPacks,
+        tilesCount,
+        exportedAt: new Date()
+      };
+
+      console.log(`📤 Exported ${downloadedNodes.length} global nodes, ${customPacks.length} custom packs, and ${tilesCount} tiles`);
+      
+      return exportData;
+    } catch (error) {
+      console.error('❌ Export failed:', error);
+      throw error;
+    }
+  }
+
+  async exportMapPacksAsFile(): Promise<void> {
+    try {
+      const exportData = await this.exportMapPacks();
+      
+      // Create download link
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
+        type: 'application/json' 
+      });
+      
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `openmaps-export-${new Date().toISOString().slice(0, 10)}.json`;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      URL.revokeObjectURL(url);
+      
+      console.log('✅ Map packs exported to file successfully');
+    } catch (error) {
+      console.error('❌ Failed to export map packs to file:', error);
+      throw error;
+    }
+  }
+
+  async exportFullDatabase(): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    try {
+      console.log('📦 Starting full database export (including tiles)...');
+      
+      // Export all data including tiles
+      const transaction = this.db.transaction(['tiles', 'globalNodes', 'customPacks'], 'readonly');
+      
+      const [tiles, globalNodes, customPacks] = await Promise.all([
+        this.getAllFromStore(transaction.objectStore('tiles')),
+        this.getAllFromStore(transaction.objectStore('globalNodes')),
+        this.getAllFromStore(transaction.objectStore('customPacks'))
+      ]);
+
+      // Process tiles to include blob data properly
+      const processedTiles = await Promise.all(tiles.map(async (tile: any) => {
+        if (tile.data && tile.data instanceof Blob) {
+          // Convert blob to base64 for JSON serialization
+          const arrayBuffer = await tile.data.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          const base64 = btoa(String.fromCharCode.apply(null, Array.from(uint8Array)));
+          
+          return {
+            ...tile,
+            data: {
+              type: 'base64',
+              content: base64,
+              mimeType: tile.data.type || 'image/png'
+            }
+          };
+        }
+        return tile;
+      }));
+
+      const fullExportData = {
+        tiles: processedTiles,
+        globalNodes,
+        customPacks,
+        exportedAt: new Date(),
+        version: this.dbVersion,
+        format: 'openmaps-tiles-v1'
+      };
+
+      // Convert to blob and download
+      const blob = new Blob([JSON.stringify(fullExportData)], { 
+        type: 'application/json' 
+      });
+      
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `openmaps-tiles-export-${new Date().toISOString().slice(0, 10)}.json`;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      URL.revokeObjectURL(url);
+      
+      console.log(`✅ Full database exported: ${processedTiles.length} tiles, ${globalNodes.length} nodes, ${customPacks.length} custom packs`);
+      
+      // Show summary to user
+      const sizeMB = Math.round(blob.size / 1024 / 1024);
+      alert(`✅ Export Complete!\n\nExported:\n• ${processedTiles.length} map tiles\n• ${globalNodes.length} regions\n• ${customPacks.length} custom areas\n\nFile size: ~${sizeMB}MB\n\nSaved as: openmaps-tiles-export-${new Date().toISOString().slice(0, 10)}.json`);
+      
+    } catch (error) {
+      console.error('❌ Full database export failed:', error);
+      throw error;
+    }
+  }
+
+  // Export specific custom pack with its tiles
+  async exportCustomPackWithTiles(packId: string): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    try {
+      const pack = this.customPacks.find(p => p.id === packId);
+      if (!pack) {
+        throw new Error(`Custom pack ${packId} not found`);
+      }
+
+      console.log(`📦 Exporting custom pack: ${pack.name}`);
+      
+      // Get all tiles for this custom pack
+      const transaction = this.db.transaction(['tiles'], 'readonly');
+      const store = transaction.objectStore('tiles');
+      const packIndex = store.index('customPackIds');
+      
+      const tilesForPack = await new Promise<any[]>((resolve, reject) => {
+        const tiles: any[] = [];
+        const request = packIndex.openCursor();
+        
+        request.onsuccess = (event) => {
+          const cursor = (event.target as IDBRequest).result;
+          if (cursor) {
+            const tile = cursor.value;
+            if (tile.customPackIds && tile.customPackIds.includes(packId)) {
+              tiles.push(tile);
+            }
+            cursor.continue();
+          } else {
+            resolve(tiles);
+          }
+        };
+        
+        request.onerror = () => reject(request.error);
+      });
+
+      // Process tiles with blob data
+      const processedTiles = await Promise.all(tilesForPack.map(async (tile: any) => {
+        if (tile.data && tile.data instanceof Blob) {
+          const arrayBuffer = await tile.data.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          const base64 = btoa(String.fromCharCode.apply(null, Array.from(uint8Array)));
+          
+          return {
+            ...tile,
+            data: {
+              type: 'base64',
+              content: base64,
+              mimeType: tile.data.type || 'image/png'
+            }
+          };
+        }
+        return tile;
+      }));
+
+      const customPackData = {
+        type: 'custom-pack',
+        pack: pack,
+        tiles: processedTiles,
+        exportedAt: new Date(),
+        version: this.dbVersion,
+        format: 'openmaps-custompack-v1'
+      };
+
+      // Create download
+      const blob = new Blob([JSON.stringify(customPackData)], { 
+        type: 'application/json' 
+      });
+      
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${pack.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-custompack.json`;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      URL.revokeObjectURL(url);
+      
+      const sizeMB = Math.round(blob.size / 1024 / 1024);
+      console.log(`✅ Custom pack exported: ${pack.name} (${processedTiles.length} tiles, ${sizeMB}MB)`);
+      
+      alert(`✅ Custom Pack Exported!\n\nName: ${pack.name}\nTiles: ${processedTiles.length}\nSize: ~${sizeMB}MB\n\nThis file contains your custom polygon area and all downloaded tiles. Import it on another device to restore this exact map pack.`);
+      
+    } catch (error) {
+      console.error('❌ Custom pack export failed:', error);
+      throw error;
+    }
+  }
+
+  // Export all custom packs with their tiles
+  async exportAllCustomPacks(): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    try {
+      if (this.customPacks.length === 0) {
+        alert('No custom packs to export');
+        return;
+      }
+
+      console.log(`📦 Exporting all ${this.customPacks.length} custom packs...`);
+      
+      const allCustomPacksData = [];
+      let totalTiles = 0;
+
+      for (const pack of this.customPacks) {
+        // Get tiles for this pack
+        const transaction = this.db.transaction(['tiles'], 'readonly');
+        const store = transaction.objectStore('tiles');
+        const packIndex = store.index('customPackIds');
+        
+        const tilesForPack = await new Promise<any[]>((resolve, reject) => {
+          const tiles: any[] = [];
+          const request = packIndex.openCursor();
+          
+          request.onsuccess = (event) => {
+            const cursor = (event.target as IDBRequest).result;
+            if (cursor) {
+              const tile = cursor.value;
+              if (tile.customPackIds && tile.customPackIds.includes(pack.id)) {
+                tiles.push(tile);
+              }
+              cursor.continue();
+            } else {
+              resolve(tiles);
+            }
+          };
+          
+          request.onerror = () => reject(request.error);
+        });
+
+        // Process tiles
+        const processedTiles = await Promise.all(tilesForPack.map(async (tile: any) => {
+          if (tile.data && tile.data instanceof Blob) {
+            const arrayBuffer = await tile.data.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+            const base64 = btoa(String.fromCharCode.apply(null, Array.from(uint8Array)));
+            
+            return {
+              ...tile,
+              data: {
+                type: 'base64',
+                content: base64,
+                mimeType: tile.data.type || 'image/png'
+              }
+            };
+          }
+          return tile;
+        }));
+
+        allCustomPacksData.push({
+          pack,
+          tiles: processedTiles
+        });
+
+        totalTiles += processedTiles.length;
+      }
+
+      const exportData = {
+        type: 'all-custom-packs',
+        customPacks: allCustomPacksData,
+        exportedAt: new Date(),
+        version: this.dbVersion,
+        format: 'openmaps-allcustompacks-v1',
+        summary: {
+          packCount: this.customPacks.length,
+          totalTiles,
+          exportedBy: 'OpenMaps'
+        }
+      };
+
+      // Create download
+      const blob = new Blob([JSON.stringify(exportData)], { 
+        type: 'application/json' 
+      });
+      
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `all-custom-packs-${new Date().toISOString().slice(0, 10)}.json`;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      URL.revokeObjectURL(url);
+      
+      const sizeMB = Math.round(blob.size / 1024 / 1024);
+      console.log(`✅ All custom packs exported: ${this.customPacks.length} packs (${totalTiles} tiles, ${sizeMB}MB)`);
+      
+      alert(`✅ All Custom Packs Exported!\n\nPacks: ${this.customPacks.length}\nTotal Tiles: ${totalTiles}\nSize: ~${sizeMB}MB\n\nThis file contains all your custom polygon areas and their tiles.`);
+      
+    } catch (error) {
+      console.error('❌ All custom packs export failed:', error);
+      throw error;
+    }
+  }
+
+  // Export specific map pack with its tiles
+  async exportMapPackWithTiles(nodeId: string): Promise<void> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    try {
+      const node = getNodeById(nodeId, this.globalNodes);
+      if (!node) {
+        throw new Error(`Node ${nodeId} not found`);
+      }
+
+      console.log(`📦 Exporting map pack: ${node.name}`);
+      
+      // Get all tiles for this node
+      const transaction = this.db.transaction(['tiles'], 'readonly');
+      const store = transaction.objectStore('tiles');
+      const nodeIndex = store.index('nodeIds');
+      
+      const tilesForNode = await new Promise<any[]>((resolve, reject) => {
+        const tiles: any[] = [];
+        const request = nodeIndex.openCursor();
+        
+        request.onsuccess = (event) => {
+          const cursor = (event.target as IDBRequest).result;
+          if (cursor) {
+            const tile = cursor.value;
+            if (tile.nodeIds && tile.nodeIds.includes(nodeId)) {
+              tiles.push(tile);
+            }
+            cursor.continue();
+          } else {
+            resolve(tiles);
+          }
+        };
+        
+        request.onerror = () => reject(request.error);
+      });
+
+      // Process tiles with blob data
+      const processedTiles = await Promise.all(tilesForNode.map(async (tile: any) => {
+        if (tile.data && tile.data instanceof Blob) {
+          const arrayBuffer = await tile.data.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          const base64 = btoa(String.fromCharCode.apply(null, Array.from(uint8Array)));
+          
+          return {
+            ...tile,
+            data: {
+              type: 'base64',
+              content: base64,
+              mimeType: tile.data.type || 'image/png'
+            }
+          };
+        }
+        return tile;
+      }));
+
+      const mapPackData = {
+        node: node,
+        tiles: processedTiles,
+        exportedAt: new Date(),
+        version: this.dbVersion,
+        format: 'openmaps-mappack-v1'
+      };
+
+      // Create download
+      const blob = new Blob([JSON.stringify(mapPackData)], { 
+        type: 'application/json' 
+      });
+      
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${node.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-mappack.json`;
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      URL.revokeObjectURL(url);
+      
+      const sizeMB = Math.round(blob.size / 1024 / 1024);
+      console.log(`✅ Map pack exported: ${node.name} (${processedTiles.length} tiles, ${sizeMB}MB)`);
+      
+      alert(`✅ Map Pack Exported!\n\nRegion: ${node.name}\nTiles: ${processedTiles.length}\nSize: ~${sizeMB}MB\n\nThis file contains all downloaded map tiles for this region and can be imported on another device.`);
+      
+    } catch (error) {
+      console.error('❌ Map pack export failed:', error);
+      throw error;
+    }
+  }
+
+  async importMapPacks(file: File): Promise<void> {
+    try {
+      const text = await file.text();
+      const importData = JSON.parse(text);
+      
+      console.log('📥 Starting import of map packs...');
+      console.log('Import data format:', importData.format);
+      
+      let importedNodes = 0;
+      let importedPacks = 0;
+      let importedTiles = 0;
+
+      // Handle different import formats
+      if (importData.format === 'openmaps-custompack-v1') {
+        // Single custom pack import
+        console.log('📦 Importing single custom pack...');
+        
+        if (importData.pack) {
+          // Check if custom pack already exists
+          const existingPackIndex = this.customPacks.findIndex(p => p.id === importData.pack.id);
+          if (existingPackIndex !== -1) {
+            const overwrite = confirm(`Custom pack "${importData.pack.name}" already exists. Overwrite it?`);
+            if (overwrite) {
+              this.customPacks[existingPackIndex] = importData.pack;
+              await this.saveCustomPack(importData.pack);
+              importedPacks++;
+            }
+          } else {
+            this.customPacks.push(importData.pack);
+            await this.saveCustomPack(importData.pack);
+            importedPacks++;
+          }
+        }
+        
+        // Import tiles for this custom pack
+        if (importData.tiles && Array.isArray(importData.tiles)) {
+          importedTiles = await this.importTilesWithProgress(importData.tiles);
+        }
+        
+      } else if (importData.format === 'openmaps-allcustompacks-v1') {
+        // All custom packs import
+        console.log('📦 Importing all custom packs...');
+        
+        if (importData.customPacks && Array.isArray(importData.customPacks)) {
+          for (const customPackData of importData.customPacks) {
+            const pack = customPackData.pack;
+            
+            // Check if custom pack already exists
+            const existingPackIndex = this.customPacks.findIndex(p => p.id === pack.id);
+            if (existingPackIndex === -1) {
+              this.customPacks.push(pack);
+              await this.saveCustomPack(pack);
+              importedPacks++;
+            }
+            
+            // Import tiles for this pack
+            if (customPackData.tiles && Array.isArray(customPackData.tiles)) {
+              const tilesImported = await this.importTilesWithProgress(customPackData.tiles);
+              importedTiles += tilesImported;
+            }
+          }
+        }
+        
+      } else if (importData.format === 'openmaps-mappack-v1') {
+        // Single map pack import
+        console.log('📦 Importing single map pack...');
+        
+        if (importData.node) {
+          // Import the node
+          const existingNodeIndex = this.globalNodes.findIndex(n => n.id === importData.node.id);
+          if (existingNodeIndex !== -1) {
+            this.globalNodes[existingNodeIndex] = { ...this.globalNodes[existingNodeIndex], ...importData.node };
+            await this.saveGlobalNode(this.globalNodes[existingNodeIndex]);
+          } else {
+            this.globalNodes.push(importData.node);
+            await this.saveGlobalNode(importData.node);
+          }
+          importedNodes++;
+        }
+        
+        // Import tiles for this pack
+        if (importData.tiles && Array.isArray(importData.tiles)) {
+          importedTiles = await this.importTilesWithProgress(importData.tiles);
+        }
+        
+      } else if (importData.format === 'openmaps-tiles-v1') {
+        // Full database import
+        console.log('📦 Importing full database...');
+        
+        // Import global nodes
+        if (importData.globalNodes && Array.isArray(importData.globalNodes)) {
+          for (const node of importData.globalNodes) {
+            const existingNodeIndex = this.globalNodes.findIndex(n => n.id === node.id);
+            if (existingNodeIndex !== -1) {
+              this.globalNodes[existingNodeIndex] = { ...this.globalNodes[existingNodeIndex], ...node };
+              await this.saveGlobalNode(this.globalNodes[existingNodeIndex]);
+            } else {
+              this.globalNodes.push(node);
+              await this.saveGlobalNode(node);
+            }
+            importedNodes++;
+          }
+        }
+
+        // Import custom packs
+        if (importData.customPacks && Array.isArray(importData.customPacks)) {
+          for (const pack of importData.customPacks) {
+            const existingPackIndex = this.customPacks.findIndex(p => p.id === pack.id);
+            if (existingPackIndex === -1) {
+              this.customPacks.push(pack);
+              await this.saveCustomPack(pack);
+              importedPacks++;
+            }
+          }
+        }
+
+        // Import tiles
+        if (importData.tiles && Array.isArray(importData.tiles)) {
+          importedTiles = await this.importTilesWithProgress(importData.tiles);
+        }
+        
+      } else {
+        // Legacy format fallback
+        console.log('📦 Importing legacy format...');
+        
+        // Validate import data structure
+        if (!importData.globalNodes && !importData.customPacks && !importData.tiles) {
+          throw new Error('Invalid import file: no recognizable data found');
+        }
+
+        // Import global nodes
+        if (importData.globalNodes && Array.isArray(importData.globalNodes)) {
+          for (const node of importData.globalNodes) {
+            const existingNodeIndex = this.globalNodes.findIndex(n => n.id === node.id);
+            if (existingNodeIndex !== -1) {
+              this.globalNodes[existingNodeIndex] = { ...this.globalNodes[existingNodeIndex], ...node };
+              await this.saveGlobalNode(this.globalNodes[existingNodeIndex]);
+            } else {
+              this.globalNodes.push(node);
+              await this.saveGlobalNode(node);
+            }
+            importedNodes++;
+          }
+        }
+
+        // Import custom packs
+        if (importData.customPacks && Array.isArray(importData.customPacks)) {
+          for (const pack of importData.customPacks) {
+            const existingPackIndex = this.customPacks.findIndex(p => p.id === pack.id);
+            if (existingPackIndex === -1) {
+              this.customPacks.push(pack);
+              await this.saveCustomPack(pack);
+              importedPacks++;
+            }
+          }
+        }
+
+        // Import tiles if available
+        if (importData.tiles && Array.isArray(importData.tiles)) {
+          importedTiles = await this.importTilesWithProgress(importData.tiles);
+        }
+      }
+
+      // Notify listeners of changes
+      this.notifyNavigationChange();
+      this.notifyCustomPacksChange();
+
+      console.log(`✅ Import completed: ${importedNodes} nodes, ${importedPacks} custom packs, ${importedTiles} tiles`);
+      
+      alert(`✅ Import Successful!\n\nImported:\n• ${importedNodes} map regions\n• ${importedPacks} custom polygons\n• ${importedTiles} map tiles\n\nExported on: ${importData.exportedAt ? new Date(importData.exportedAt).toLocaleDateString() : 'Unknown'}`);
+      
+    } catch (error) {
+      console.error('❌ Import failed:', error);
+      alert(`❌ Import Failed\n\n${error.message}\n\nPlease check that you're importing a valid OpenMaps export file.`);
+      throw error;
+    }
+  }
+
+  private async importTilesWithProgress(tiles: any[]): Promise<number> {
+    console.log(`📦 Importing ${tiles.length} tiles (this may take a while)...`);
+    
+    let importedCount = 0;
+    const batchSize = 100;
+    
+    for (let i = 0; i < tiles.length; i += batchSize) {
+      const batch = tiles.slice(i, i + batchSize);
+      
+      await Promise.all(batch.map(async (tile) => {
+        try {
+          // Convert base64 data back to blob if needed
+          if (tile.data && tile.data.type === 'base64') {
+            const binaryString = atob(tile.data.content);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let j = 0; j < binaryString.length; j++) {
+              bytes[j] = binaryString.charCodeAt(j);
+            }
+            tile.data = new Blob([bytes], { type: tile.data.mimeType || 'image/png' });
+          }
+          
+          await this.saveTile(tile);
+          importedCount++;
+        } catch (error) {
+          console.warn(`Failed to import tile ${tile.x}/${tile.y}/${tile.z}:`, error);
+        }
+      }));
+      
+      // Progress feedback
+      if (i % 1000 === 0 && i > 0) {
+        console.log(`📦 Imported ${i} tiles...`);
+      }
+    }
+    
+    return importedCount;
+  }
+
+  private async getAllFromStore(store: IDBObjectStore): Promise<any[]> {
+    const request = store.getAll();
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  // ==================== MEMORY AND DOWNLOAD WARNINGS ====================
+  validateDownloadLimits(nodeId: string, minZoom: number, maxZoom: number): {
+    valid: boolean;
+    warning?: string;
+    estimatedTiles: number;
+    estimatedSizeMB: number;
+  } {
+    const node = getNodeById(nodeId, this.globalNodes);
+    if (!node) {
+      return { valid: false, warning: 'Node not found', estimatedTiles: 0, estimatedSizeMB: 0 };
+    }
+
+    // Calculate estimated tiles for the zoom range
+    let estimatedTiles = 0;
+    for (let z = minZoom; z <= maxZoom; z++) {
+      if (node.level === 'world') {
+        // World downloads: exponential growth
+        estimatedTiles += Math.pow(4, z);
+      } else {
+        // Regional downloads: more reasonable estimation
+        const bounds = node.bounds;
+        const width = bounds.east - bounds.west;
+        const height = bounds.north - bounds.south;
+        const tilesAtZoom = Math.ceil(width * height * Math.pow(4, z - 10));
+        estimatedTiles += Math.max(1, tilesAtZoom);
+      }
+    }
+
+    const estimatedSizeMB = Math.round((estimatedTiles * 15) / 1024); // ~15KB per tile
+
+    // Define limits
+    const TILE_LIMIT_WARNING = 100000;  // 100k tiles
+    const TILE_LIMIT_DANGER = 1000000;  // 1M tiles
+    const SIZE_LIMIT_WARNING = 1500;    // 1.5GB
+    const SIZE_LIMIT_DANGER = 5000;     // 5GB
+
+    let warning: string | undefined;
+
+    if (node.level === 'world' && maxZoom >= 16) {
+      return {
+        valid: false,
+        warning: `🚫 World downloads above zoom level 15 are not supported due to memory limitations.\n\nRequested: Zoom ${minZoom}-${maxZoom}\nEstimated: ${estimatedTiles.toLocaleString()} tiles (${estimatedSizeMB.toLocaleString()}MB)\n\nRecommendation: Use zoom 1-15 for world downloads, or create custom polygons for specific regions at higher zoom levels (up to 18).`,
+        estimatedTiles,
+        estimatedSizeMB
+      };
+    }
+
+    if (estimatedTiles > TILE_LIMIT_DANGER) {
+      warning = `⚠️ VERY LARGE DOWNLOAD WARNING\n\nThis download is extremely large and may:\n• Crash your browser\n• Take hours to complete\n• Use ${estimatedSizeMB.toLocaleString()}MB of storage\n\nEstimated: ${estimatedTiles.toLocaleString()} tiles\n\nRecommendation: Create smaller custom polygons instead.`;
+    } else if (estimatedTiles > TILE_LIMIT_WARNING || estimatedSizeMB > SIZE_LIMIT_WARNING) {
+      warning = `⚠️ Large Download Warning\n\nThis download is quite large:\n• ${estimatedTiles.toLocaleString()} tiles\n• ~${estimatedSizeMB.toLocaleString()}MB storage\n• May take significant time\n\nContinue anyway?`;
+    }
+
+    return {
+      valid: estimatedTiles <= TILE_LIMIT_DANGER,
+      warning,
+      estimatedTiles,
+      estimatedSizeMB
+    };
   }
 
   // ==================== CLEANUP ====================

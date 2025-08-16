@@ -1,6 +1,6 @@
-# 🌍 OpenMaps - Global Hierarchical Offline Map System
+# 🌍 OpenMaps - Global Dynamic Offline Map System
 
-**OpenMaps** is an advanced open-source mapping application with a revolutionary hierarchical offline map pack system. Navigate from world-level down to city sections, create custom polygon-based map areas, and enjoy ultra-fast downloads with intelligent tile management.
+**OpenMaps** is an advanced open-source mapping application with a revolutionary dynamic offline map pack system. Features real-time API-driven location loading, custom polygon areas, and intelligent tile management with complete offline functionality.
 
 ## ✨ Key Features
 

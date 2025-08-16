@@ -21,15 +21,24 @@ export interface OfflineMapRegion {
 }
 
 export interface CachedTile {
-  url: string;
-  blob: Blob;
-  timestamp: number;
+  x: number;
+  y: number;
+  z: number;
+  layerId: string;
+  data: Blob;
+  downloaded: boolean;
+  nodeIds: string[];
+  customPackIds: string[];
+  downloadedAt: number;
+  lastAccessed: number;
+  accessCount: number;
   expires: number;
+  priority: number;
 }
 
 export class OfflineTileCache {
-  private dbName = 'openmaps_tiles';
-  private dbVersion = 1;
+  private dbName = 'openmaps_global'; // Use same database as globalMapPackSystem
+  private dbVersion = 3; // Match globalMapPackSystem version
   private db: IDBDatabase | null = null;
 
   async init(): Promise<void> {
@@ -45,54 +54,87 @@ export class OfflineTileCache {
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
         
-        // Create tile cache store
+        // Create tile cache store with same schema as globalMapPackSystem
         if (!db.objectStoreNames.contains('tiles')) {
-          const tileStore = db.createObjectStore('tiles', { keyPath: 'url' });
-          tileStore.createIndex('timestamp', 'timestamp', { unique: false });
+          const tileStore = db.createObjectStore('tiles', { keyPath: ['x', 'y', 'z', 'layerId'] });
+          tileStore.createIndex('nodeIds', 'nodeIds', { multiEntry: true });
+          tileStore.createIndex('customPackIds', 'customPackIds', { multiEntry: true });
+          tileStore.createIndex('priority', 'priority');
+          tileStore.createIndex('lastAccessed', 'lastAccessed');
         }
         
         // Create regions store
         if (!db.objectStoreNames.contains('regions')) {
           db.createObjectStore('regions', { keyPath: 'id' });
         }
+
+        // Create global nodes store if it doesn't exist
+        if (!db.objectStoreNames.contains('globalNodes')) {
+          const nodeStore = db.createObjectStore('globalNodes', { keyPath: 'id' });
+          nodeStore.createIndex('level', 'level');
+          nodeStore.createIndex('parentId', 'parentId');
+          nodeStore.createIndex('isDownloaded', 'isDownloaded');
+        }
+
+        // Create custom packs store if it doesn't exist
+        if (!db.objectStoreNames.contains('customPacks')) {
+          const customStore = db.createObjectStore('customPacks', { keyPath: 'id' });
+          customStore.createIndex('created', 'created');
+          customStore.createIndex('isDownloaded', 'isDownloaded');
+        }
       };
     });
   }
 
-  async cacheTile(url: string, blob: Blob, expiresInDays: number = 30): Promise<void> {
+  async cacheTile(x: number, y: number, z: number, layerId: string, blob: Blob, expiresInDays: number = 30): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
     
     const transaction = this.db.transaction(['tiles'], 'readwrite');
     const store = transaction.objectStore('tiles');
     
-    const cachedTile: CachedTile = {
-      url,
-      blob,
-      timestamp: Date.now(),
-      expires: Date.now() + (expiresInDays * 24 * 60 * 60 * 1000)
+    const tileData = {
+      x, y, z, layerId,
+      data: blob,
+      downloaded: true,
+      nodeIds: [],
+      customPackIds: [],
+      downloadedAt: Date.now(),
+      lastAccessed: Date.now(),
+      accessCount: 1,
+      expires: Date.now() + (expiresInDays * 24 * 60 * 60 * 1000),
+      priority: 15 - z // Higher zoom = higher priority
     };
     
-    await store.put(cachedTile);
+    await store.put(tileData);
   }
 
-  async getCachedTile(url: string): Promise<Blob | null> {
+  async getCachedTile(x: number, y: number, z: number, layerId: string = 'openstreetmap'): Promise<Blob | null> {
     if (!this.db) return null;
     
     const transaction = this.db.transaction(['tiles'], 'readonly');
     const store = transaction.objectStore('tiles');
     
     return new Promise((resolve) => {
-      const request = store.get(url);
+      const request = store.get([x, y, z, layerId]);
       
       request.onsuccess = () => {
-        const result = request.result as CachedTile;
+        const result = request.result;
         
-        if (result && result.expires > Date.now()) {
-          resolve(result.blob);
+        if (result && result.data && result.expires > Date.now()) {
+          // Update access tracking
+          result.lastAccessed = Date.now();
+          result.accessCount = (result.accessCount || 0) + 1;
+          
+          // Save updated access info
+          const updateTransaction = this.db!.transaction(['tiles'], 'readwrite');
+          const updateStore = updateTransaction.objectStore('tiles');
+          updateStore.put(result);
+          
+          resolve(result.data);
         } else {
-          // Tile expired, remove it
-          if (result) {
-            this.removeCachedTile(url);
+          // Tile expired or not found, remove if expired
+          if (result && result.expires <= Date.now()) {
+            this.removeCachedTile(x, y, z, layerId);
           }
           resolve(null);
         }
@@ -102,12 +144,12 @@ export class OfflineTileCache {
     });
   }
 
-  async removeCachedTile(url: string): Promise<void> {
+  async removeCachedTile(x: number, y: number, z: number, layerId: string = 'openstreetmap'): Promise<void> {
     if (!this.db) return;
     
     const transaction = this.db.transaction(['tiles'], 'readwrite');
     const store = transaction.objectStore('tiles');
-    await store.delete(url);
+    await store.delete([x, y, z, layerId]);
   }
 
   async downloadRegion(region: OfflineMapRegion, layer: MapPackLayer, onProgress?: (progress: number) => void): Promise<void> {
@@ -128,8 +170,14 @@ export class OfflineTileCache {
     for (const batch of batches) {
       const promises = batch.map(async (tileUrl) => {
         try {
+          // Parse coordinates from URL
+          const urlParts = tileUrl.split('/');
+          const z = parseInt(urlParts[urlParts.length - 3]);
+          const x = parseInt(urlParts[urlParts.length - 2]);
+          const y = parseInt(urlParts[urlParts.length - 1].split('.')[0]);
+          
           // Check if tile already exists
-          const existing = await this.getCachedTile(tileUrl);
+          const existing = await this.getCachedTile(x, y, z, layer.id);
           if (existing) {
             return true; // Skip already cached tiles
           }
@@ -137,7 +185,7 @@ export class OfflineTileCache {
           const response = await fetch(tileUrl);
           if (response.ok) {
             const blob = await response.blob();
-            await this.cacheTile(tileUrl, blob);
+            await this.cacheTile(x, y, z, layer.id, blob);
             return true;
           } else {
             failed.push(tileUrl);
@@ -222,8 +270,13 @@ export class OfflineTileCache {
     return new Promise((resolve) => {
       const request = store.getAll();
       request.onsuccess = () => {
-        const tiles = request.result as CachedTile[];
-        const totalSize = tiles.reduce((sum, tile) => sum + tile.blob.size, 0);
+        const tiles = request.result || [];
+        const totalSize = tiles.reduce((sum: number, tile: any) => {
+          if (tile.data instanceof Blob) {
+            return sum + tile.data.size;
+          }
+          return sum;
+        }, 0);
         resolve(totalSize);
       };
       request.onerror = () => resolve(0);
@@ -245,27 +298,27 @@ export const OFFLINE_REGIONS: OfflineMapRegion[] = [
     id: 'nyc',
     name: 'New York City',
     bounds: { north: 40.9176, south: 40.4774, east: -73.7004, west: -74.2591 },
-    zoom: { min: 10, max: 16 },
-    estimatedTiles: 15000,
-    estimatedSizeMB: 150,
+    zoom: { min: 10, max: 18 }, // Increased from 16 to 18
+    estimatedTiles: 45000, // Updated estimate for higher zoom
+    estimatedSizeMB: 450,
     isDownloaded: false
   },
   {
     id: 'london',
     name: 'London',
     bounds: { north: 51.6723, south: 51.2867, east: 0.3340, west: -0.5103 },
-    zoom: { min: 10, max: 16 },
-    estimatedTiles: 12000,
-    estimatedSizeMB: 120,
+    zoom: { min: 10, max: 18 }, // Increased from 16 to 18
+    estimatedTiles: 36000, // Updated estimate for higher zoom
+    estimatedSizeMB: 360,
     isDownloaded: false
   },
   {
     id: 'paris',
     name: 'Paris',
     bounds: { north: 49.0073, south: 48.8155, east: 2.4699, west: 2.2249 },
-    zoom: { min: 10, max: 16 },
-    estimatedTiles: 8000,
-    estimatedSizeMB: 80,
+    zoom: { min: 10, max: 18 }, // Increased from 16 to 18
+    estimatedTiles: 24000, // Updated estimate for higher zoom
+    estimatedSizeMB: 240,
     isDownloaded: false
   }
 ];

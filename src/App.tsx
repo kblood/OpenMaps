@@ -5,7 +5,9 @@ import SearchBar from './components/Search/SearchBar';
 import RoutePanel from './components/Routing/RoutePanel';
 import MapControls from './components/UI/MapControls';
 import GlobalMapManager from './components/GlobalMapManager';
+import OfflineStatusIndicator from './components/OfflineStatusIndicator';
 import { globalMapPackSystem } from './services/globalMapPackSystem';
+import { offlineTileCache } from './services/offlineTileCache';
 import { MapPackDebugger } from './components/MapPackDebugger';
 import { useGeolocation } from './hooks/useGeolocation';
 import { Location, Marker, Route } from './types';
@@ -183,8 +185,16 @@ function App() {
     console.log('App: Map instance ready:', mapInstance);
     setMap(mapInstance);
     
-    // Initialize global map pack system
-    globalMapPackSystem.initialize().catch(console.error);
+    // Initialize global map pack system and offline tile cache
+    Promise.all([
+      globalMapPackSystem.initialize(),
+      // Also initialize the offline tile cache
+      import('./services/offlineTileCache').then(module => module.offlineTileCache.init())
+    ]).then(() => {
+      console.log('✅ All map systems initialized successfully');
+    }).catch(error => {
+      console.error('❌ Map system initialization failed:', error);
+    });
     
     // Track initial view
     const center = mapInstance.getCenter();
@@ -368,10 +378,14 @@ function App() {
         />
       </div>
 
-      {/* App Title */}
-      <div className="absolute top-4 right-4 z-[1000] bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg">
-        <h1 className="text-lg font-bold text-gray-900">OpenMaps</h1>
-        <p className="text-xs text-gray-600">Open Source Maps</p>
+      {/* App Title and Status */}
+      <div className="absolute top-4 right-4 z-[1000] space-y-2">
+        <div className="bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg">
+          <h1 className="text-lg font-bold text-gray-900">OpenMaps</h1>
+          <p className="text-xs text-gray-600">Open Source Maps</p>
+        </div>
+        
+        <OfflineStatusIndicator />
       </div>
 
       {/* Global Map Pack Manager */}
