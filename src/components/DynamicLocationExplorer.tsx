@@ -214,12 +214,40 @@ const DynamicLocationExplorer: React.FC<DynamicLocationExplorerProps> = ({
     // Load world root node
     const loadWorld = async () => {
       try {
+        console.log('🔄 Loading world location for Dynamic Explorer...');
         const world = await dynamicLocationService.getLocation('world');
         if (world) {
+          console.log('✅ World location loaded successfully:', world);
           setWorldLocation(world);
+        } else {
+          console.error('❌ World location not found');
+          // Try to wait a bit and retry in case database is still initializing
+          setTimeout(async () => {
+            console.log('🔄 Retrying world location load...');
+            const retryWorld = await dynamicLocationService.getLocation('world');
+            if (retryWorld) {
+              console.log('✅ World location loaded on retry:', retryWorld);
+              setWorldLocation(retryWorld);
+            } else {
+              console.error('❌ World location still not found after retry');
+            }
+          }, 2000);
         }
       } catch (error) {
-        console.error('Failed to load world location:', error);
+        console.error('❌ Failed to load world location:', error);
+        // Try to wait and retry
+        setTimeout(async () => {
+          console.log('🔄 Retrying after error...');
+          try {
+            const retryWorld = await dynamicLocationService.getLocation('world');
+            if (retryWorld) {
+              console.log('✅ World location loaded after error retry:', retryWorld);
+              setWorldLocation(retryWorld);
+            }
+          } catch (retryError) {
+            console.error('❌ Retry also failed:', retryError);
+          }
+        }, 3000);
       }
     };
 

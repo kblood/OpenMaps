@@ -90,22 +90,38 @@ export class DynamicLocationService {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(this.dbName, this.dbVersion);
 
-      request.onerror = () => reject(request.error);
+      request.onerror = () => {
+        console.error('Failed to open dynamic locations database:', request.error);
+        reject(request.error);
+      };
+      
       request.onsuccess = () => {
         this.db = request.result;
+        console.log('✅ Dynamic locations database opened successfully');
         this.preloadCoreData();
         resolve();
       };
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
+        console.log(`🔄 Upgrading dynamic locations database from version ${event.oldVersion} to ${event.newVersion}`);
         
         // Clear old stores if version changed
         if (event.oldVersion > 0) {
           try {
-            db.deleteObjectStore('locations');
-            db.deleteObjectStore('searchIndex');
-            db.deleteObjectStore('apiCache');
+            if (db.objectStoreNames.contains('locations')) {
+              db.deleteObjectStore('locations');
+            }
+            if (db.objectStoreNames.contains('searchIndex')) {
+              db.deleteObjectStore('searchIndex');
+            }
+            if (db.objectStoreNames.contains('apiCache')) {
+              db.deleteObjectStore('apiCache');
+            }
+            if (db.objectStoreNames.contains('children')) {
+              db.deleteObjectStore('children');
+            }
+            console.log('🗑️ Cleared old object stores');
           } catch (e) {
             console.log('Some stores did not exist, creating fresh database');
           }
@@ -118,183 +134,194 @@ export class DynamicLocationService {
         locationStore.createIndex('countryCode', 'metadata.countryCode');
         locationStore.createIndex('lastUpdated', 'lastUpdated');
         locationStore.createIndex('population', 'population');
+        console.log('✅ Created locations store');
         
         // Children cache store - for persistent parent-child relationships
         const childrenStore = db.createObjectStore('children', { keyPath: 'parentId' });
         childrenStore.createIndex('lastUpdated', 'lastUpdated');
+        console.log('✅ Created children cache store');
         
         // Search index store
         const searchStore = db.createObjectStore('searchIndex', { keyPath: 'id' });
         searchStore.createIndex('tokens', 'searchTokens', { multiEntry: true });
         searchStore.createIndex('level', 'level');
+        console.log('✅ Created search index store');
         
         // API cache store
         const cacheStore = db.createObjectStore('apiCache', { keyPath: 'key' });
         cacheStore.createIndex('expiry', 'expiry');
+        console.log('✅ Created API cache store');
+        
+        console.log('🎉 Database upgrade completed successfully');
       };
     });
   }
 
   // ==================== CORE DATA PRELOADING ====================
   private async preloadCoreData(): Promise<void> {
-    console.log('🔄 Preloading core location data...');
-    
-    // Load minimal world structure that's always available offline
-    const coreData: DynamicLocationNode[] = [
-      {
-        id: 'world',
-        name: 'World',
-        level: 'world',
-        hasChildren: true,
-        childrenLoaded: false,
-        childrenIds: [],
-        bounds: { north: 85, south: -85, east: 180, west: -180 },
-        center: { lat: 0, lng: 0 },
-        isPreloaded: true,
-        estimatedTiles: 1000000,
-        estimatedSizeMB: 20000,
-        isDownloaded: false,
-        priority: 1,
-        tags: ['global'],
-        metadata: {},
-        lastUpdated: Date.now(),
-        source: 'preloaded'
-      },
-      // Continents
-      {
-        id: 'north_america',
-        name: 'North America',
-        level: 'continent',
-        parentId: 'world',
-        hasChildren: true,
-        childrenLoaded: false,
-        childrenIds: [],
-        bounds: { north: 83.11, south: 5.5, east: -12.2, west: -168.0 },
-        center: { lat: 54.5, lng: -105.0 },
-        isPreloaded: true,
-        estimatedTiles: 150000,
-        estimatedSizeMB: 3000,
-        isDownloaded: false,
-        priority: 2,
-        tags: ['continent'],
-        metadata: {},
-        lastUpdated: Date.now(),
-        source: 'preloaded'
-      },
-      {
-        id: 'south_america',
-        name: 'South America',
-        level: 'continent',
-        parentId: 'world',
-        hasChildren: true,
-        childrenLoaded: false,
-        childrenIds: [],
-        bounds: { north: 15.25, south: -59.44, east: -26.87, west: -91.66 },
-        center: { lat: -8.78, lng: -55.49 },
-        isPreloaded: true,
-        estimatedTiles: 120000,
-        estimatedSizeMB: 2400,
-        isDownloaded: false,
-        priority: 2,
-        tags: ['continent'],
-        metadata: {},
-        lastUpdated: Date.now(),
-        source: 'preloaded'
-      },
-      {
-        id: 'europe',
-        name: 'Europe',
-        level: 'continent',
-        parentId: 'world',
-        hasChildren: true,
-        childrenLoaded: false,
-        childrenIds: [],
-        bounds: { north: 81.0, south: 27.64, east: 69.0, west: -31.27 },
-        center: { lat: 54.0, lng: 15.0 },
-        isPreloaded: true,
-        estimatedTiles: 100000,
-        estimatedSizeMB: 2000,
-        isDownloaded: false,
-        priority: 2,
-        tags: ['continent'],
-        metadata: {},
-        lastUpdated: Date.now(),
-        source: 'preloaded'
-      },
-      {
-        id: 'africa',
-        name: 'Africa',
-        level: 'continent',
-        parentId: 'world',
-        hasChildren: true,
-        childrenLoaded: false,
-        childrenIds: [],
-        bounds: { north: 37.35, south: -34.83, east: 51.27, west: -25.36 },
-        center: { lat: 0.0, lng: 20.0 },
-        isPreloaded: true,
-        estimatedTiles: 120000,
-        estimatedSizeMB: 2400,
-        isDownloaded: false,
-        priority: 2,
-        tags: ['continent'],
-        metadata: {},
-        lastUpdated: Date.now(),
-        source: 'preloaded'
-      },
-      {
-        id: 'asia',
-        name: 'Asia',
-        level: 'continent',
-        parentId: 'world',
-        hasChildren: true,
-        childrenLoaded: false,
-        childrenIds: [],
-        bounds: { north: 81.0, south: -11.0, east: 180.0, west: 26.0 },
-        center: { lat: 35.0, lng: 100.0 },
-        isPreloaded: true,
-        estimatedTiles: 200000,
-        estimatedSizeMB: 4000,
-        isDownloaded: false,
-        priority: 2,
-        tags: ['continent'],
-        metadata: {},
-        lastUpdated: Date.now(),
-        source: 'preloaded'
-      },
-      {
-        id: 'oceania',
-        name: 'Oceania',
-        level: 'continent',
-        parentId: 'world',
-        hasChildren: true,
-        childrenLoaded: false,
-        childrenIds: [],
-        bounds: { north: 30.0, south: -55.0, east: 180.0, west: 110.0 },
-        center: { lat: -25.0, lng: 140.0 },
-        isPreloaded: true,
-        estimatedTiles: 80000,
-        estimatedSizeMB: 1600,
-        isDownloaded: false,
-        priority: 2,
-        tags: ['continent'],
-        metadata: {},
-        lastUpdated: Date.now(),
-        source: 'preloaded'
-      }
-    ];
+    try {
+      console.log('🔄 Preloading core location data...');
+      
+      // Load minimal world structure that's always available offline
+      const coreData: DynamicLocationNode[] = [
+        {
+          id: 'world',
+          name: 'World',
+          level: 'world',
+          hasChildren: true,
+          childrenLoaded: false,
+          childrenIds: [],
+          bounds: { north: 85, south: -85, east: 180, west: -180 },
+          center: { lat: 0, lng: 0 },
+          isPreloaded: true,
+          estimatedTiles: 1000000,
+          estimatedSizeMB: 20000,
+          isDownloaded: false,
+          priority: 1,
+          tags: ['global'],
+          metadata: {},
+          lastUpdated: Date.now(),
+          source: 'preloaded'
+        },
+        // Continents
+        {
+          id: 'north_america',
+          name: 'North America',
+          level: 'continent',
+          parentId: 'world',
+          hasChildren: true,
+          childrenLoaded: false,
+          childrenIds: [],
+          bounds: { north: 83.11, south: 5.5, east: -12.2, west: -168.0 },
+          center: { lat: 54.5, lng: -105.0 },
+          isPreloaded: true,
+          estimatedTiles: 150000,
+          estimatedSizeMB: 3000,
+          isDownloaded: false,
+          priority: 2,
+          tags: ['continent'],
+          metadata: {},
+          lastUpdated: Date.now(),
+          source: 'preloaded'
+        },
+        {
+          id: 'south_america',
+          name: 'South America',
+          level: 'continent',
+          parentId: 'world',
+          hasChildren: true,
+          childrenLoaded: false,
+          childrenIds: [],
+          bounds: { north: 15.25, south: -59.44, east: -26.87, west: -91.66 },
+          center: { lat: -8.78, lng: -55.49 },
+          isPreloaded: true,
+          estimatedTiles: 120000,
+          estimatedSizeMB: 2400,
+          isDownloaded: false,
+          priority: 2,
+          tags: ['continent'],
+          metadata: {},
+          lastUpdated: Date.now(),
+          source: 'preloaded'
+        },
+        {
+          id: 'europe',
+          name: 'Europe',
+          level: 'continent',
+          parentId: 'world',
+          hasChildren: true,
+          childrenLoaded: false,
+          childrenIds: [],
+          bounds: { north: 81.0, south: 27.64, east: 69.0, west: -31.27 },
+          center: { lat: 54.0, lng: 15.0 },
+          isPreloaded: true,
+          estimatedTiles: 100000,
+          estimatedSizeMB: 2000,
+          isDownloaded: false,
+          priority: 2,
+          tags: ['continent'],
+          metadata: {},
+          lastUpdated: Date.now(),
+          source: 'preloaded'
+        },
+        {
+          id: 'africa',
+          name: 'Africa',
+          level: 'continent',
+          parentId: 'world',
+          hasChildren: true,
+          childrenLoaded: false,
+          childrenIds: [],
+          bounds: { north: 37.35, south: -34.83, east: 51.27, west: -25.36 },
+          center: { lat: 0.0, lng: 20.0 },
+          isPreloaded: true,
+          estimatedTiles: 120000,
+          estimatedSizeMB: 2400,
+          isDownloaded: false,
+          priority: 2,
+          tags: ['continent'],
+          metadata: {},
+          lastUpdated: Date.now(),
+          source: 'preloaded'
+        },
+        {
+          id: 'asia',
+          name: 'Asia',
+          level: 'continent',
+          parentId: 'world',
+          hasChildren: true,
+          childrenLoaded: false,
+          childrenIds: [],
+          bounds: { north: 81.0, south: -11.0, east: 180.0, west: 26.0 },
+          center: { lat: 35.0, lng: 100.0 },
+          isPreloaded: true,
+          estimatedTiles: 200000,
+          estimatedSizeMB: 4000,
+          isDownloaded: false,
+          priority: 2,
+          tags: ['continent'],
+          metadata: {},
+          lastUpdated: Date.now(),
+          source: 'preloaded'
+        },
+        {
+          id: 'oceania',
+          name: 'Oceania',
+          level: 'continent',
+          parentId: 'world',
+          hasChildren: true,
+          childrenLoaded: false,
+          childrenIds: [],
+          bounds: { north: 30.0, south: -55.0, east: 180.0, west: 110.0 },
+          center: { lat: -25.0, lng: 140.0 },
+          isPreloaded: true,
+          estimatedTiles: 80000,
+          estimatedSizeMB: 1600,
+          isDownloaded: false,
+          priority: 2,
+          tags: ['continent'],
+          metadata: {},
+          lastUpdated: Date.now(),
+          source: 'preloaded'
+        }
+      ];
 
-    // Save core data to cache and database
-    for (const location of coreData) {
-      this.cache.set(location.id, location);
-      try {
-        await this.saveLocation(location);
-        console.log(`✅ Saved ${location.name} (${location.level}) to database`);
-      } catch (error) {
-        console.error(`❌ Failed to save ${location.name}:`, error);
+      // Save core data to cache and database
+      for (const location of coreData) {
+        this.cache.set(location.id, location);
+        try {
+          await this.saveLocation(location);
+          console.log(`✅ Saved ${location.name} (${location.level}) to database`);
+        } catch (error) {
+          console.error(`❌ Failed to save ${location.name}:`, error);
+        }
       }
+      
+      console.log(`✅ Preloaded ${coreData.length} core locations to cache and database`);
+    } catch (error) {
+      console.error('❌ Failed to preload core data:', error);
+      // Continue anyway - the service can still work with API calls
     }
-    
-    console.log(`✅ Preloaded ${coreData.length} core locations to cache and database`);
   }
 
   // ==================== DYNAMIC LOCATION LOADING ====================
