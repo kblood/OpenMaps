@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Navigation, MapPin, Clock, Map, X, ArrowUpDown, MapPin as CurrentLocation, Car, User, Bike, Footprints, Mountain, Trees, Zap, Star, History, Settings, BarChart3, MousePointer, Copy } from 'lucide-react';
+import { Navigation, MapPin, Clock, Map, X, ArrowUpDown, MapPin as CurrentLocation, Car, User, Bike, Footprints, Mountain, Trees, Zap, Star, History, Settings, BarChart3, MousePointer, Copy, Wifi, WifiOff } from 'lucide-react';
 import { Location, Route } from '../../types';
-import { getRoute, getRouteAlternatives, formatDistance, formatDuration, calculateRouteMetrics } from '../../services/routing';
+import { getRoute, getRouteAlternatives, formatDistance, formatDuration, calculateRouteMetrics, setOfflineRoutingMode, isOfflineRoutingEnabled } from '../../services/routing';
 import { reverseGeocode } from '../../services/geocoding';
 import SearchBar from '../Search/SearchBar';
 
@@ -67,6 +67,7 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
   const [clipboard, setClipboard] = useState<ClipboardLocation[]>([]);
   const [isSelectingStart, setIsSelectingStart] = useState(false);
   const [isSelectingEnd, setIsSelectingEnd] = useState(false);
+  const [isOfflineMode, setIsOfflineMode] = useState(isOfflineRoutingEnabled());
   
   // Create stable callback refs
   const startLocationRef = useRef(startLocation);
@@ -96,6 +97,18 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
       return newClipboard;
     });
   }, []);
+
+  // Handle offline mode toggle
+  const handleOfflineModeToggle = useCallback(() => {
+    const newOfflineMode = !isOfflineMode;
+    setIsOfflineMode(newOfflineMode);
+    setOfflineRoutingMode(newOfflineMode);
+    
+    // If we have a current route and switching modes, recalculate
+    if (startLocation && endLocation && calculateRouteIfReadyRef.current) {
+      calculateRouteIfReadyRef.current(startLocation, endLocation);
+    }
+  }, [isOfflineMode, startLocation, endLocation]);
 
   // Load saved data on component mount
   useEffect(() => {
@@ -552,7 +565,40 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
       {showOptions && (
         <div className="mb-4 p-3 bg-gray-50 rounded-lg">
           <h3 className="text-sm font-medium text-gray-900 mb-2">Route Preferences</h3>
-          <div className="space-y-2">
+          <div className="space-y-3">
+            {/* Offline Mode Toggle */}
+            <div className="flex items-center justify-between p-3 bg-white rounded-lg border">
+              <div className="flex items-center space-x-3">
+                {isOfflineMode ? (
+                  <WifiOff className="h-5 w-5 text-orange-500" />
+                ) : (
+                  <Wifi className="h-5 w-5 text-green-500" />
+                )}
+                <div>
+                  <div className="text-sm font-medium text-gray-900">
+                    {isOfflineMode ? 'Offline Routing' : 'Online Routing'}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {isOfflineMode 
+                      ? 'Using mathematical calculations for directions'
+                      : 'Using real-time routing services (OSRM/Valhalla)'
+                    }
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={handleOfflineModeToggle}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                  isOfflineMode ? 'bg-orange-500' : 'bg-green-500'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    isOfflineMode ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
             <div className="flex space-x-2">
               {(['fastest', 'shortest', 'balanced'] as RoutePreference[]).map((pref) => (
                 <button

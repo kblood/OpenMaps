@@ -61,8 +61,31 @@ Two complementary systems work together:
 2. **Global Map Pack System** (`GlobalMapManager.tsx`)
    - Pre-defined map pack downloads
    - 4-tab interface: World Hierarchy, Custom Packs, Draw Area, Downloads
-   - Polygon drawing for custom areas
+   - Advanced polygon drawing and editing for custom areas
    - Parallel tile downloading (20x speed improvement)
+
+### Polygon Editing System
+Revolutionary polygon editing system for precise map pack boundary management:
+
+**Key Component**: `src/components/PolygonEditor.tsx`
+- **Draggable Vertices**: Each polygon point can be dragged to reposition
+- **Multi-Selection**: Ctrl+Click to select multiple points for batch operations
+- **Point Insertion**: Click gray midpoint markers to add new vertices
+- **Point Deletion**: Remove individual or multiple points with validation
+- **Visual Feedback**: Color-coded editing states and real-time polygon updates
+
+**User Interface Features**:
+- 🔵 **Draggable Points**: Blue/purple markers for existing vertices
+- 🟢 **Selected Points**: Green highlighting for selected vertices
+- ⚪ **Insertion Points**: Gray midpoint markers for adding new vertices
+- 📐 **Selection Outline**: Dashed line connecting multi-selected points
+- 🔧 **Floating Toolbar**: Context-sensitive editing instructions
+
+**Integration Points**:
+- Custom map pack editing via "Edit Shape" button
+- Real-time polygon validation and saving
+- Seamless integration with existing map pack system
+- Support for complex administrative boundary polygons
 
 ### Frontend Architecture
 ```
@@ -138,6 +161,16 @@ When modifying the location hierarchy system:
 - Check browser DevTools → Application → IndexedDB → `openmaps_locations` for cache state
 - Clear cache with `testDynamicLocationService.clearCache()` when testing changes
 
+### Working with Polygon Editing System
+When modifying the polygon editing features:
+- Test with both simple (4-point) and complex (50+ point) polygons
+- Verify multi-selection works with Ctrl+Click on different browsers
+- Test point insertion by clicking midpoint markers
+- Ensure polygon validation prevents invalid shapes (< 3 points)
+- Check that drag operations update polygon data correctly
+- Verify "Edit Shape" button toggles editing mode properly
+- Test floating toolbar appears/disappears correctly
+
 ### API Integration
 - The system uses multiple APIs: Overpass, Nominatim, REST Countries, OSRM, Valhalla
 - All API calls go through the backend proxy for CORS and caching
@@ -211,6 +244,14 @@ GRAPHHOPPER_BASE_URL=https://graphhopper.com/api/1/route
 - **Cache corruption**: Use `testDynamicLocationService.clearCache()` to reset
 - **TypeScript errors**: Run `npm run typecheck` to identify type issues
 - **Build failures**: Ensure all dependencies installed with `npm install`
+
+### Polygon Editing Issues
+- **Points not draggable**: Check that `editingPolygonId` state is set correctly
+- **Multi-selection not working**: Verify Ctrl+Click event handling in browser
+- **Insertion points not visible**: Ensure polygon has enough points (≥3) and editing mode is active
+- **Polygon not saving**: Check `globalMapPackSystem.updateCustomPack()` calls in browser console
+- **Floating toolbar missing**: Verify `editingPolygonId` state is not null
+- **Performance issues**: Test with simplified polygons (use polygon simplification for 1000+ points)
 
 ### Development Environment
 - Node.js 18+ required for optimal performance

@@ -11,7 +11,7 @@ import { offlineTileCache } from './services/offlineTileCache';
 import { MapPackDebugger } from './components/MapPackDebugger';
 import ProperHierarchyDemo from './components/ProperHierarchyDemo';
 import { useGeolocation } from './hooks/useGeolocation';
-import { Location, Marker, Route } from './types';
+import { Location, Marker, Route, SearchResult } from './types';
 import { reverseGeocode } from './services/geocoding';
 import { DEFAULT_LAYER, getAvailableLayers } from './config/mapLayers';
 
@@ -77,6 +77,12 @@ function App() {
   const [polygonPoints, setPolygonPoints] = useState<[number, number][]>([]);
   const [showPolygonPreview, setShowPolygonPreview] = useState(false);
   const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
+  const [selectedCustomPacks, setSelectedCustomPacks] = useState<Set<string>>(new Set());
+  const [customPackPolygons, setCustomPackPolygons] = useState<Map<string, [number, number][]>>(new Map());
+  
+  // Polygon editing state
+  const [editingPolygonId, setEditingPolygonId] = useState<string | null>(null);
+  const [editablePolygons, setEditablePolygons] = useState<Map<string, [number, number][]>>(new Map());
 
   const { location, loading: locating, getCurrentLocation } = useGeolocation();
 
@@ -310,12 +316,360 @@ function App() {
     }
   }, [currentMapLayer]);
 
+  const handleCreateMapPack = useCallback(async (searchResult: SearchResult) => {
+    try {
+      console.log('🗺️ Creating map pack for search result:', searchResult);
+      
+      // Parse coordinates
+      const lat = parseFloat(searchResult.lat);
+      const lng = parseFloat(searchResult.lon);
+      
+      // Create bounding box around the search result
+      const name = searchResult.display_name.split(',')[0];
+      const type = searchResult.type || 'place';
+      const displayName = searchResult.display_name;
+      
+      console.log(`🔍 Search result details:`, {
+        name,
+        type,
+        lat,
+        lng,
+        boundingbox: searchResult.boundingbox,
+        importance: searchResult.importance
+      });
+      
+      let polygon: [number, number][] | null = null;
+      
+      // Try to get full polygon geometry from WebGIS for more accurate city/area polygons
+      if (['city', 'town', 'village', 'administrative', 'municipality', 'county', 'state'].includes(type)) {
+        try {
+          console.log('🌍 Attempting to get full polygon geometry for enhanced accuracy...');
+          const { getFullPolygonForPlace } = await import('./services/webgisService');
+          
+          // Use enhanced polygon extraction with proper search radius
+          const searchRadius = type === 'city' || type === 'town' ? 0.05 : 
+                             type === 'village' || type === 'municipality' ? 0.02 : 0.1;
+          
+          const fullPolygon = await getFullPolygonForPlace(name, { lat, lng }, searchRadius);
+          
+          if (fullPolygon && fullPolygon.polygon.length > 5) {
+            console.log(`✅ Found full polygon geometry for ${name}:`, {
+              points: fullPolygon.polygon.length,
+              area: fullPolygon.properties?.area,
+              adminLevel: fullPolygon.adminLevel,
+              source: fullPolygon.source
+            });
+            
+            polygon = fullPolygon.polygon;
+            console.log('🗺️ Using WebGIS full polygon geometry - complex boundary extracted');
+          } else {
+            throw new Error('No suitable polygon geometry found');
+          }
+        } catch (webgisError) {
+          console.log('⚠️ WebGIS polygon extraction failed, falling back to search result bounds:', webgisError);
+          // polygon remains null, will be set below
+        }
+      }
+      
+      // Use actual bounding box from search result if available and WebGIS failed
+      if (!polygon && searchResult.boundingbox && searchResult.boundingbox.length === 4) {
+        console.log('📦 Using search result bounding box:', searchResult.boundingbox);
+        const [south, north, west, east] = searchResult.boundingbox.map(parseFloat);
+        
+        // Calculate current bounds size
+        const latSize = north - south;
+        const lngSize = east - west;
+        console.log(`📐 Original bounds size: ${latSize.toFixed(4)}° × ${lngSize.toFixed(4)}°`);
+        
+        // Apply smart padding based on place type and current size
+        let paddingFactor = 0.25; // Default 25% padding
+        
+        // Adjust padding based on place type
+        if (type === 'city' || type === 'town') {
+          paddingFactor = 0.3; // Cities need more coverage
+        } else if (type === 'village' || type === 'hamlet') {
+          paddingFactor = 0.5; // Small places need proportionally more padding
+        } else if (type === 'country' || type === 'state') {
+          paddingFactor = 0.1; // Large areas need less padding
+        }
+        
+        // Ensure minimum size for very small areas
+        const minSize = 0.01; // ~1km minimum
+        const adjustedLatSize = Math.max(latSize, minSize);
+        const adjustedLngSize = Math.max(lngSize, minSize);
+        
+        // Apply padding
+        const latPadding = adjustedLatSize * paddingFactor;
+        const lngPadding = adjustedLngSize * paddingFactor;
+        
+        // Recalculate center if we expanded the area
+        const centerLat = (north + south) / 2;
+        const centerLng = (east + west) / 2;
+        const halfAdjustedLatSize = adjustedLatSize / 2;
+        const halfAdjustedLngSize = adjustedLngSize / 2;
+        
+        polygon = [
+          [centerLat - halfAdjustedLatSize - latPadding, centerLng - halfAdjustedLngSize - lngPadding],  // southwest
+          [centerLat - halfAdjustedLatSize - latPadding, centerLng + halfAdjustedLngSize + lngPadding],  // southeast
+          [centerLat + halfAdjustedLatSize + latPadding, centerLng + halfAdjustedLngSize + lngPadding],  // northeast
+          [centerLat + halfAdjustedLatSize + latPadding, centerLng - halfAdjustedLngSize - lngPadding],  // northwest
+          [centerLat - halfAdjustedLatSize - latPadding, centerLng - halfAdjustedLngSize - lngPadding]   // close the polygon
+        ];
+        
+        const finalLatSize = (adjustedLatSize + 2 * latPadding);
+        const finalLngSize = (adjustedLngSize + 2 * lngPadding);
+        console.log(`✅ Enhanced bounding box: ${finalLatSize.toFixed(4)}° × ${finalLngSize.toFixed(4)}° (${paddingFactor * 100}% padding + minimum size)`);
+      } else if (!polygon) {
+        console.log('📍 No bounding box available, using enhanced fallback sizing based on type');
+        
+        // Enhanced fallback: Use more realistic sizes based on the type of place
+        let boundsSize = 0.015; // default ~1.5km (increased from 1km)
+        
+        if (type === 'city') {
+          boundsSize = 0.08; // ~8km (increased from 5km)
+        } else if (type === 'town') {
+          boundsSize = 0.04; // ~4km  
+        } else if (type === 'county' || type === 'administrative') {
+          boundsSize = 0.3; // ~30km (increased from 20km)
+        } else if (type === 'state' || type === 'province') {
+          boundsSize = 0.5; // ~50km
+        } else if (type === 'country') {
+          boundsSize = 2.0; // ~200km (increased from 100km)
+        } else if (type === 'village') {
+          boundsSize = 0.03; // ~3km (increased from 2km)
+        } else if (type === 'hamlet') {
+          boundsSize = 0.015; // ~1.5km
+        } else if (type === 'suburb' || type === 'residential') {
+          boundsSize = 0.02; // ~2km (increased from 1km)
+        } else if (type === 'neighbourhood') {
+          boundsSize = 0.01; // ~1km
+        } else if (type === 'municipality') {
+          boundsSize = 0.06; // ~6km
+        }
+        
+        // Consider importance factor for additional scaling
+        const importance = searchResult.importance || 0.5;
+        if (importance > 0.8) {
+          boundsSize *= 1.3; // Major places get 30% larger area
+        } else if (importance < 0.3) {
+          boundsSize *= 0.8; // Minor places get 20% smaller area
+        }
+        
+        // Create polygon as a rectangle around the location
+        polygon = [
+          [lat - boundsSize, lng - boundsSize], // southwest
+          [lat - boundsSize, lng + boundsSize], // southeast
+          [lat + boundsSize, lng + boundsSize], // northeast
+          [lat + boundsSize, lng - boundsSize], // northwest
+          [lat - boundsSize, lng - boundsSize]  // close the polygon
+        ];
+        
+        const areaKm = Math.round(boundsSize * 222); // Rough km conversion
+        console.log(`📐 Created enhanced fallback polygon: ${areaKm}×${areaKm}km for ${type} (importance: ${importance.toFixed(2)})`);
+      }
+      
+      // Final safety check
+      if (!polygon) {
+        console.error('❌ Failed to generate polygon for map pack');
+        alert('❌ Failed to generate polygon for map pack. Please try again.');
+        return;
+      }
+      
+      // Create appropriate description based on method used
+      let description = `Custom map pack for ${displayName}`;
+      if (polygon.length > 5) {
+        description += ' (using real administrative boundary geometry)';
+      } else if (searchResult.boundingbox) {
+        description += ' (using enhanced search result bounds with smart padding)';
+      } else {
+        description += ` (estimated ${type} area with importance scaling)`;
+      }
+      
+      // Create custom pack
+      const packId = await globalMapPackSystem.createCustomPack(
+        `${name} Map Pack`,
+        description,
+        polygon,
+        [10, 11, 12, 13, 14, 15, 16, 17, 18], // Default zoom levels
+        ['openstreetmap'] // Default layers
+      );
+      
+      console.log(`✅ Created map pack: ${packId}`);
+      
+      // Center map on the location
+      if (map) {
+        map.setView([lat, lng], 12);
+      }
+      
+      // Open the Global Map Manager to show the new pack
+      setShowMapPacks(true);
+      
+      // Calculate polygon area for user feedback
+      const bounds = {
+        north: Math.max(...polygon.map(p => p[0])),
+        south: Math.min(...polygon.map(p => p[0])),
+        east: Math.max(...polygon.map(p => p[1])),
+        west: Math.min(...polygon.map(p => p[1]))
+      };
+      const widthKm = Math.round((bounds.east - bounds.west) * 111 * Math.cos(lat * Math.PI / 180));
+      const heightKm = Math.round((bounds.north - bounds.south) * 111);
+      
+      // Determine generation method for user feedback
+      let method = '';
+      if (polygon.length > 5) {
+        method = 'Real administrative boundary geometry';
+      } else if (searchResult.boundingbox) {
+        method = 'Enhanced search bounds with smart padding';
+      } else {
+        method = `Enhanced ${type} area estimation`;
+      }
+      
+      // Show success notification with details
+      alert(`✅ Map pack "${name} Map Pack" created successfully!\n\n` +
+            `Area: ~${widthKm} × ${heightKm} km\n` +
+            `Method: ${method}\n\n` +
+            `You can now download it from the Custom Packs tab.`);
+      
+    } catch (error) {
+      console.error('Failed to create map pack:', error);
+      alert('❌ Failed to create map pack. Please try again.');
+    }
+  }, [map]);
+
+  const handleSelectCustomPack = useCallback(async (packId: string, selected: boolean) => {
+    try {
+      const newSelected = new Set(selectedCustomPacks);
+      const newPolygons = new Map(customPackPolygons);
+      
+      if (selected) {
+        newSelected.add(packId);
+        
+        // Get the custom pack polygon
+        const customPacks = globalMapPackSystem.getCustomPacks();
+        const pack = customPacks.find(p => p.id === packId);
+        if (pack) {
+          newPolygons.set(packId, pack.polygon);
+          console.log(`🗺️ Added polygon for custom pack: ${pack.name}`);
+        }
+      } else {
+        newSelected.delete(packId);
+        newPolygons.delete(packId);
+        console.log(`🗺️ Removed polygon for custom pack: ${packId}`);
+      }
+      
+      setSelectedCustomPacks(newSelected);
+      setCustomPackPolygons(newPolygons);
+    } catch (error) {
+      console.error('Failed to handle custom pack selection:', error);
+    }
+  }, [selectedCustomPacks, customPackPolygons]);
+
+  const handleViewCustomPackOnMap = useCallback(async (packId: string) => {
+    try {
+      const customPacks = globalMapPackSystem.getCustomPacks();
+      const pack = customPacks.find(p => p.id === packId);
+      
+      if (pack && map) {
+        // Center map on the pack's center
+        map.setView([pack.center.lat, pack.center.lng], 10);
+        
+        // Auto-select the pack to show its polygon
+        handleSelectCustomPack(packId, true);
+        
+        console.log(`🗺️ Centered map on custom pack: ${pack.name}`);
+      }
+    } catch (error) {
+      console.error('Failed to view custom pack on map:', error);
+    }
+  }, [map, handleSelectCustomPack]);
+
   const handleMapMoveEnd = useCallback((center: Location, zoom: number) => {
     // Save the new position when user manually moves/zooms the map
     saveMapPosition(center, zoom);
     setMapCenter(center);
     setZoom(zoom);
   }, []);
+
+  // Polygon editing handlers
+  const handlePolygonEdit = useCallback((polygonId: string, newPolygon: [number, number][]) => {
+    console.log(`🔧 Editing polygon ${polygonId}:`, newPolygon);
+    
+    // If it's a custom pack polygon, update the custom pack
+    if (polygonId.startsWith('custom-pack-')) {
+      const packIndex = parseInt(polygonId.split('-')[2]);
+      const customPacks = globalMapPackSystem.getCustomPacks();
+      const pack = customPacks[packIndex];
+      
+      if (pack) {
+        // Update the pack's polygon
+        globalMapPackSystem.updateCustomPack(pack.id, {
+          name: pack.name,
+          description: pack.description,
+          polygon: newPolygon,
+          zoomLevels: pack.zoomLevels,
+          layerIds: pack.layerIds
+        }).then(() => {
+          console.log(`✅ Updated custom pack polygon: ${pack.name}`);
+          // Update local state
+          setCustomPackPolygons(prev => {
+            const newMap = new Map(prev);
+            newMap.set(pack.id, newPolygon);
+            return newMap;
+          });
+        }).catch(error => {
+          console.error('Failed to update custom pack polygon:', error);
+          alert('Failed to update polygon. Please try again.');
+        });
+      }
+    } else {
+      // Update editable polygons map
+      setEditablePolygons(prev => {
+        const newMap = new Map(prev);
+        newMap.set(polygonId, newPolygon);
+        return newMap;
+      });
+    }
+  }, []);
+
+  const handleStartPolygonEdit = useCallback((polygonId: string) => {
+    console.log(`🎯 Starting to edit polygon: ${polygonId}`);
+    setEditingPolygonId(polygonId);
+  }, []);
+
+  const handleStopPolygonEdit = useCallback(() => {
+    console.log('🛑 Stopping polygon edit');
+    setEditingPolygonId(null);
+  }, []);
+
+  const handleEditCustomPackPolygon = useCallback((packId: string) => {
+    try {
+      const customPacks = globalMapPackSystem.getCustomPacks();
+      const pack = customPacks.find(p => p.id === packId);
+      
+      if (pack) {
+        // Find the index of this pack in customPackPolygons
+        const customPacksArray = globalMapPackSystem.getCustomPacks();
+        const packIndex = customPacksArray.findIndex(p => p.id === packId);
+        
+        if (packIndex !== -1) {
+          const polygonId = `custom-pack-${packIndex}`;
+          console.log(`🔧 Starting edit for pack: ${pack.name} (${polygonId})`);
+          setEditingPolygonId(polygonId);
+          
+          // Ensure the polygon is visible
+          handleSelectCustomPack(packId, true);
+          
+          // Center map on the pack
+          if (map) {
+            map.setView([pack.center.lat, pack.center.lng], 12);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to start editing custom pack polygon:', error);
+      alert('Failed to start polygon editing. Please try again.');
+    }
+  }, [map, handleSelectCustomPack]);
 
   return (
     <div className="relative h-screen w-screen overflow-hidden">
@@ -335,7 +689,58 @@ function App() {
         polygonPoints={polygonPoints}
         showPolygonPreview={showPolygonPreview}
         isDrawingPolygon={isDrawingPolygon}
+        customPackPolygons={Array.from(customPackPolygons.values())}
+        selectedCustomPacks={selectedCustomPacks}
+        editingPolygonId={editingPolygonId}
+        onPolygonEdit={handlePolygonEdit}
+        editablePolygons={editablePolygons}
       />
+
+      {/* Polygon Editing Toolbar */}
+      {editingPolygonId && (
+        <div className="absolute top-20 left-4 z-[1000] bg-white/95 backdrop-blur-sm rounded-lg shadow-xl border border-gray-200 p-4 max-w-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-gray-900 flex items-center space-x-2">
+              <span>🔧</span>
+              <span>Editing Polygon</span>
+            </h3>
+            <button
+              onClick={handleStopPolygonEdit}
+              className="text-gray-400 hover:text-gray-600 text-xl"
+            >
+              ×
+            </button>
+          </div>
+          
+          <div className="space-y-2 text-sm text-gray-700">
+            <div className="flex items-center space-x-2">
+              <span className="w-4 h-4 bg-blue-500 rounded-full flex-shrink-0"></span>
+              <span>Click and drag points to move them</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="w-4 h-4 bg-green-500 rounded-full flex-shrink-0"></span>
+              <span>Ctrl+click to select multiple points</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="w-4 h-4 bg-gray-400 rounded-full flex-shrink-0"></span>
+              <span>Click gray midpoints to add new points</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="w-4 h-4 bg-red-500 rounded-full flex-shrink-0"></span>
+              <span>Use popup buttons to delete points</span>
+            </div>
+          </div>
+          
+          <div className="mt-4 pt-3 border-t border-gray-200">
+            <button
+              onClick={handleStopPolygonEdit}
+              className="w-full px-3 py-2 bg-green-500 text-white rounded hover:bg-green-600 text-sm font-medium"
+            >
+              ✅ Finish Editing
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Search Bar */}
       {showSearch && (
@@ -345,6 +750,7 @@ function App() {
             onMapCenter={handleMapCenter}
             placeholder="Search for places..."
             showMapOptions={true}
+            onCreateMapPack={handleCreateMapPack}
           />
         </div>
       )}
@@ -409,6 +815,12 @@ function App() {
         onShowPolygonPreviewChange={setShowPolygonPreview}
         isDrawingPolygon={isDrawingPolygon}
         onIsDrawingPolygonChange={setIsDrawingPolygon}
+        onSelectCustomPack={handleSelectCustomPack}
+        onViewCustomPackOnMap={handleViewCustomPackOnMap}
+        selectedCustomPacks={selectedCustomPacks}
+        onEditCustomPackPolygon={handleEditCustomPackPolygon}
+        onStopPolygonEdit={handleStopPolygonEdit}
+        editingPolygonId={editingPolygonId}
       />
 
       {/* Administrative Hierarchy Explorer */}

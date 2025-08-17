@@ -24,6 +24,12 @@ interface Props {
   onShowPolygonPreviewChange?: (show: boolean) => void;
   isDrawingPolygon?: boolean;
   onIsDrawingPolygonChange?: (drawing: boolean) => void;
+  onSelectCustomPack?: (packId: string, selected: boolean) => void;
+  onViewCustomPackOnMap?: (packId: string) => void;
+  selectedCustomPacks?: Set<string>;
+  onEditCustomPackPolygon?: (packId: string) => void;
+  onStopPolygonEdit?: () => void;
+  editingPolygonId?: string | null;
 }
 
 // (removed unused PolygonDrawingState interface)
@@ -37,7 +43,13 @@ const GlobalMapManager: React.FC<Props> = ({
   showPolygonPreview = false,
   onShowPolygonPreviewChange,
   isDrawingPolygon = false,
-  onIsDrawingPolygonChange
+  onIsDrawingPolygonChange,
+  onSelectCustomPack,
+  onViewCustomPackOnMap,
+  selectedCustomPacks = new Set(),
+  onEditCustomPackPolygon,
+  onStopPolygonEdit,
+  editingPolygonId = null
 }) => {
   // State management
   const [activeTab, setActiveTab] = useState<'hierarchy' | 'dynamic' | 'custom' | 'downloads' | 'polygon'>('dynamic');
@@ -52,6 +64,10 @@ const GlobalMapManager: React.FC<Props> = ({
     zoomLevels: [10, 11, 12, 13, 14, 15, 16, 17, 18],
     layerIds: ['openstreetmap']
   });
+
+  // Custom pack editing
+  const [editingPack, setEditingPack] = useState<CustomMapPack | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
 
   // Search state
   const [searchInput, setSearchInput] = useState('');
@@ -105,19 +121,23 @@ const GlobalMapManager: React.FC<Props> = ({
     onPolygonPointsChange?.([]);
     onShowPolygonPreviewChange?.(false);
 
-    // Add click handler to map
+    // Add click handler to map with higher priority
     const clickHandler = (e: any) => {
+      console.log('🖱️ Drawing click detected:', e.latlng);
       const lat = e.latlng?.lat || e.lat;
       const lng = e.latlng?.lng || e.lng;
       
       if (lat && lng) {
-  // Compute next points array from current props and emit (prop is not a setter)
-  const next = [...polygonPoints, [lat, lng] as [number, number]];
-  onPolygonPointsChange?.(next);
+        // Get current points from the latest props state
+        const currentPoints = polygonPoints || [];
+        const next = [...currentPoints, [lat, lng] as [number, number]];
+        console.log('📍 Adding point:', [lat, lng], 'Total points:', next.length);
+        onPolygonPointsChange?.(next);
       }
     };
 
     mapDrawingHandlerRef.current = clickHandler;
+    // Use a higher priority event handler to ensure drawing takes precedence
     mapInstance.on('click', clickHandler);
     
     setActiveTab('polygon');
@@ -178,6 +198,64 @@ const GlobalMapManager: React.FC<Props> = ({
     } catch (error) {
       console.error('Failed to create custom pack:', error);
       alert('Failed to create custom pack. Please try again.');
+    }
+  };
+
+  // ==================== CUSTOM PACK EDITING ====================
+  const handleEditCustomPack = (pack: CustomMapPack) => {
+    setEditingPack(pack);
+    setCustomPackForm({
+      name: pack.name,
+      description: pack.description,
+      zoomLevels: pack.zoomLevels,
+      layerIds: pack.layerIds
+    });
+    setShowEditModal(true);
+  };
+
+  const handleSaveCustomPack = async () => {
+    if (!editingPack) return;
+    
+    try {
+      // Update the custom pack
+      await globalMapPackSystem.updateCustomPack(editingPack.id, {
+        name: customPackForm.name,
+        description: customPackForm.description,
+        zoomLevels: customPackForm.zoomLevels,
+        layerIds: customPackForm.layerIds
+      });
+      
+      setShowEditModal(false);
+      setEditingPack(null);
+      
+      // Reset form
+      setCustomPackForm({
+        name: '',
+        description: '',
+        zoomLevels: [10, 11, 12, 13, 14, 15, 16, 17, 18],
+        layerIds: ['openstreetmap']
+      });
+      
+      console.log(`✅ Updated custom pack: ${editingPack.name}`);
+    } catch (error) {
+      console.error('Failed to update custom pack:', error);
+      alert('Failed to update custom pack. Please try again.');
+    }
+  };
+
+  const handleDeleteCustomPack = async (packId: string) => {
+    const pack = customPacks.find(p => p.id === packId);
+    if (!pack) return;
+    
+    const confirm = window.confirm(`Are you sure you want to delete "${pack.name}"?\n\nThis action cannot be undone.`);
+    if (!confirm) return;
+    
+    try {
+      await globalMapPackSystem.deleteCustomPack(packId);
+      console.log(`✅ Deleted custom pack: ${pack.name}`);
+    } catch (error) {
+      console.error('Failed to delete custom pack:', error);
+      alert('Failed to delete custom pack. Please try again.');
     }
   };
 
@@ -774,6 +852,30 @@ const GlobalMapManager: React.FC<Props> = ({
           </div>
           
           <div className="flex flex-col space-y-2 ml-4">
+            {/* View on Map button */}
+            <button
+              onClick={() => onViewCustomPackOnMap?.(pack.id)}
+              className="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 flex items-center space-x-1"
+              title={`View ${pack.name} on map`}
+            >
+              <span>🗺️</span>
+              <span>View</span>
+            </button>
+            
+            {/* Toggle visibility button */}
+            <button
+              onClick={() => onSelectCustomPack?.(pack.id, !selectedCustomPacks.has(pack.id))}
+              className={`px-3 py-1 rounded text-sm flex items-center space-x-1 ${
+                selectedCustomPacks.has(pack.id)
+                  ? 'bg-purple-500 text-white hover:bg-purple-600'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+              }`}
+              title={`${selectedCustomPacks.has(pack.id) ? 'Hide' : 'Show'} polygon on map`}
+            >
+              <span>{selectedCustomPacks.has(pack.id) ? '👁️' : '👁️‍🗨️'}</span>
+              <span>{selectedCustomPacks.has(pack.id) ? 'Hide' : 'Show'}</span>
+            </button>
+            
             {!pack.isDownloaded && (
               <button
                 onClick={() => {
@@ -796,6 +898,45 @@ const GlobalMapManager: React.FC<Props> = ({
                  '⬇️ Download'}
               </button>
             )}
+            
+            {/* Edit and Delete buttons */}
+            <button
+              onClick={() => handleEditCustomPack(pack)}
+              className="px-3 py-1 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600 flex items-center space-x-1"
+              title={`Edit ${pack.name} settings`}
+            >
+              <span>✏️</span>
+              <span>Edit Settings</span>
+            </button>
+            
+            {/* Edit Polygon button */}
+            <button
+              onClick={() => {
+                if (editingPolygonId === pack.id) {
+                  onStopPolygonEdit?.();
+                } else {
+                  onEditCustomPackPolygon?.(pack.id);
+                }
+              }}
+              className={`px-3 py-1 rounded text-sm flex items-center space-x-1 ${
+                editingPolygonId === pack.id
+                  ? 'bg-orange-500 text-white hover:bg-orange-600'
+                  : 'bg-purple-500 text-white hover:bg-purple-600'
+              }`}
+              title={editingPolygonId === pack.id ? 'Stop editing polygon' : 'Edit polygon shape'}
+            >
+              <span>{editingPolygonId === pack.id ? '🛑' : '🔧'}</span>
+              <span>{editingPolygonId === pack.id ? 'Stop Edit' : 'Edit Shape'}</span>
+            </button>
+            
+            <button
+              onClick={() => handleDeleteCustomPack(pack.id)}
+              className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600 flex items-center space-x-1"
+              title={`Delete ${pack.name}`}
+            >
+              <span>🗑️</span>
+              <span>Delete</span>
+            </button>
             
             {pack.isDownloaded && (
               <>
@@ -1429,6 +1570,113 @@ const GlobalMapManager: React.FC<Props> = ({
             </div>
           )}
         </div>
+        
+        {/* Edit Custom Pack Modal */}
+        {showEditModal && editingPack && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[1200]">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+              <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                <h3 className="text-lg font-bold">✏️ Edit Map Pack</h3>
+                <button
+                  onClick={() => setShowEditModal(false)}
+                  className="text-gray-400 hover:text-gray-600 text-2xl"
+                >
+                  ×
+                </button>
+              </div>
+              
+              <div className="p-4 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Pack Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={customPackForm.name}
+                    onChange={(e) => setCustomPackForm(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="e.g., Downtown Area, Custom Route"
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Description
+                  </label>
+                  <textarea
+                    value={customPackForm.description}
+                    onChange={(e) => setCustomPackForm(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="Optional description..."
+                    rows={3}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Zoom Levels
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <select
+                      value={Math.min(...customPackForm.zoomLevels)}
+                      onChange={(e) => {
+                        const min = parseInt(e.target.value);
+                        const max = Math.max(...customPackForm.zoomLevels);
+                        const levels = Array.from({ length: max - min + 1 }, (_, i) => min + i);
+                        setCustomPackForm(prev => ({ ...prev, zoomLevels: levels }));
+                      }}
+                      className="border border-gray-300 rounded px-2 py-1 text-sm"
+                    >
+                      {Array.from({ length: 18 }, (_, i) => i + 1).map(z => (
+                        <option key={z} value={z}>Min: {z}</option>
+                      ))}
+                    </select>
+                    <span>to</span>
+                    <select
+                      value={Math.max(...customPackForm.zoomLevels)}
+                      onChange={(e) => {
+                        const max = parseInt(e.target.value);
+                        const min = Math.min(...customPackForm.zoomLevels);
+                        const levels = Array.from({ length: max - min + 1 }, (_, i) => min + i);
+                        setCustomPackForm(prev => ({ ...prev, zoomLevels: levels }));
+                      }}
+                      className="border border-gray-300 rounded px-2 py-1 text-sm"
+                    >
+                      {Array.from({ length: 18 }, (_, i) => i + 1).map(z => (
+                        <option key={z} value={z}>Max: {z}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Levels {Math.min(...customPackForm.zoomLevels)}-{Math.max(...customPackForm.zoomLevels)} 
+                    ({customPackForm.zoomLevels.length} levels)
+                  </p>
+                </div>
+                
+                <div className="bg-gray-100 rounded p-3 text-sm">
+                  <p><strong>Polygon:</strong> {editingPack.polygon.length} points (cannot be edited)</p>
+                  <p><strong>Created:</strong> {editingPack.created.toLocaleDateString()}</p>
+                </div>
+              </div>
+              
+              <div className="flex justify-end space-x-2 p-4 border-t border-gray-200">
+                <button
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveCustomPack}
+                  disabled={!customPackForm.name.trim()}
+                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

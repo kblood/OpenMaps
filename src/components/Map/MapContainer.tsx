@@ -4,6 +4,7 @@ import { LatLngExpression, Map as LeafletMap } from 'leaflet';
 import { Location, Marker as MarkerType, Route } from '../../types';
 import { getMapLayer } from '../../config/mapLayers';
 import { OfflineTileLayer } from '../../services/offlineTileLayer';
+import PolygonEditor from '../PolygonEditor';
 import 'leaflet/dist/leaflet.css';
 
 // Fix for default markers in react-leaflet
@@ -54,6 +55,11 @@ interface MapProps {
   polygonPoints?: [number, number][];
   showPolygonPreview?: boolean;
   isDrawingPolygon?: boolean;
+  customPackPolygons?: [number, number][][];
+  selectedCustomPacks?: Set<string>;
+  editingPolygonId?: string | null;
+  onPolygonEdit?: (polygonId: string, newPolygon: [number, number][]) => void;
+  editablePolygons?: Map<string, [number, number][]>;
 }
 
 function MapEventHandler({ onMapClick, onContextMenu, onMapMoveEnd }: { 
@@ -159,7 +165,12 @@ const MapComponent: React.FC<MapProps> = ({
   currentLayer,
   polygonPoints = [],
   showPolygonPreview = false,
-  isDrawingPolygon = false
+  isDrawingPolygon = false,
+  customPackPolygons = [],
+  selectedCustomPacks = new Set(),
+  editingPolygonId = null,
+  onPolygonEdit,
+  editablePolygons = new Map()
 }) => {
   const handleContextMenu = (location: Location) => {
     if (onContextMenu) {
@@ -314,6 +325,46 @@ const MapComponent: React.FC<MapProps> = ({
           )}
         </>
       )}
+      
+      {/* Custom Pack Polygons with Editing Support */}
+      {customPackPolygons.length > 0 && customPackPolygons.map((polygon, index) => (
+        polygon.length >= 3 && (
+          <PolygonEditor
+            key={`custom-pack-${index}`}
+            polygon={polygon}
+            onPolygonChange={(newPolygon) => {
+              if (onPolygonEdit) {
+                onPolygonEdit(`custom-pack-${index}`, newPolygon);
+              }
+            }}
+            isEditing={editingPolygonId === `custom-pack-${index}`}
+            color="#8B5CF6"
+            fillColor="#A855F7"
+            editable={true}
+            className="custom-pack-polygon"
+          />
+        )
+      ))}
+      
+      {/* Editable Polygons from EditablePolygons Map */}
+      {Array.from(editablePolygons.entries()).map(([polygonId, polygon]) => (
+        polygon.length >= 3 && (
+          <PolygonEditor
+            key={polygonId}
+            polygon={polygon}
+            onPolygonChange={(newPolygon) => {
+              if (onPolygonEdit) {
+                onPolygonEdit(polygonId, newPolygon);
+              }
+            }}
+            isEditing={editingPolygonId === polygonId}
+            color="#10B981"
+            fillColor="#34D399"
+            editable={true}
+            className="editable-polygon"
+          />
+        )
+      ))}
       
       {/* Drawing mode indicator */}
       {isDrawingPolygon && (
