@@ -87,6 +87,30 @@ Revolutionary polygon editing system for precise map pack boundary management:
 - Seamless integration with existing map pack system
 - Support for complex administrative boundary polygons
 
+### Multi-Layer Map Pack System
+Advanced multi-layer support with flexible configuration options:
+
+**Key Features**:
+- **Multiple Layer Support**: Each map pack can contain multiple map layers (OSM, satellite, terrain, etc.)
+- **Copy with Customization**: Copy existing packs with different layer/zoom combinations
+- **Layer Selection UI**: Visual interface for selecting multiple layers in copy modal
+- **Zoom Level Configuration**: Granular control over zoom levels (1-18) with quick presets
+- **Smart Estimation**: Real-time tile count and size estimation based on layer/zoom selection
+
+**Key Component**: `src/components/CopyMapPackModal.tsx`
+- **Layer Selection**: Multi-checkbox interface for available layers
+- **Zoom Level Grid**: Visual grid interface for selecting zoom levels (1-18)
+- **Quick Presets**: Low (1-10), Medium (8-15), High (12-18) zoom level presets
+- **Real-time Estimation**: Live updates of estimated tile count and download size
+- **Copy Options**: Custom name, description, and configuration for copied packs
+
+**User Interface Elements**:
+- 📋 **Copy Button**: Available on each custom pack card
+- 🎯 **Layer Display**: Shows layer count and zoom range in pack details
+- ⚡ **Quick Selection**: Preset buttons for common zoom level ranges
+- 📊 **Size Estimation**: Real-time calculation of download size and tile count
+- ⚠️ **Size Warnings**: Alerts for large downloads (>500MB)
+
 ### Frontend Architecture
 ```
 src/
@@ -171,6 +195,16 @@ When modifying the polygon editing features:
 - Verify "Edit Shape" button toggles editing mode properly
 - Test floating toolbar appears/disappears correctly
 
+### Working with Multi-Layer Map Pack System
+When modifying the multi-layer features:
+- Test copy functionality with different layer combinations
+- Verify estimation calculations update correctly when layers/zoom levels change
+- Test quick preset buttons for zoom level selection
+- Ensure layer availability detection works with different map pack configurations
+- Check that copy modal shows current pack details accurately
+- Verify large download warnings appear for >500MB estimates
+- Test that copied packs maintain polygon geometry while allowing layer/zoom changes
+
 ### API Integration
 - The system uses multiple APIs: Overpass, Nominatim, REST Countries, OSRM, Valhalla
 - All API calls go through the backend proxy for CORS and caching
@@ -252,6 +286,14 @@ GRAPHHOPPER_BASE_URL=https://graphhopper.com/api/1/route
 - **Polygon not saving**: Check `globalMapPackSystem.updateCustomPack()` calls in browser console
 - **Floating toolbar missing**: Verify `editingPolygonId` state is not null
 - **Performance issues**: Test with simplified polygons (use polygon simplification for 1000+ points)
+
+### Multi-Layer Map Pack Issues
+- **Copy button not working**: Check `globalMapPackSystem.copyCustomPack()` method implementation
+- **Layer selection not updating**: Verify `availableLayers` state is populated from `getAvailableLayers()`
+- **Estimation not updating**: Check that `useEffect` dependencies include `zoomLevels` and `layerIds`
+- **Copy modal not opening**: Verify `showCopyModal` state and `copyingPack` are set correctly
+- **Large download warnings missing**: Check estimation calculation logic in `CopyMapPackModal`
+- **Layer display incorrect**: Verify `pack.layerIds` array is properly populated and displayed
 
 ### Development Environment
 - Node.js 18+ required for optimal performance

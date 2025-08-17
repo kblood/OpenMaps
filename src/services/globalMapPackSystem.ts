@@ -1625,6 +1625,160 @@ export class GlobalMapPackSystem {
     };
   }
 
+  // ==================== CUSTOM PACK MANAGEMENT ====================
+  async updateCustomPack(packId: string, updates: Partial<CustomMapPack>): Promise<void> {
+    try {
+      const packIndex = this.customPacks.findIndex(p => p.id === packId);
+      if (packIndex === -1) {
+        throw new Error(`Custom pack with ID ${packId} not found`);
+      }
+
+      // Update the pack
+      this.customPacks[packIndex] = {
+        ...this.customPacks[packIndex],
+        ...updates,
+        id: packId, // Ensure ID doesn't change
+        created: this.customPacks[packIndex].created, // Creation date cannot be changed
+      };
+
+      // Recalculate estimates if zoom levels, layers, or polygon changed
+      if (updates.zoomLevels || updates.layerIds || updates.polygon) {
+        const pack = this.customPacks[packIndex];
+        
+        // Recalculate bounds and center if polygon changed
+        if (updates.polygon) {
+          const lats = pack.polygon.map(p => p[0]);
+          const lngs = pack.polygon.map(p => p[1]);
+          pack.bounds = {
+            north: Math.max(...lats),
+            south: Math.min(...lats),
+            east: Math.max(...lngs),
+            west: Math.min(...lngs)
+          };
+          pack.center = {
+            lat: (pack.bounds.north + pack.bounds.south) / 2,
+            lng: (pack.bounds.east + pack.bounds.west) / 2
+          };
+        }
+        
+        // Recalculate tile estimates
+        let estimatedTiles = 0;
+        for (const zoom of pack.zoomLevels) {
+          const tilesAtZoom = this.estimatePolygonTiles(pack.polygon, zoom);
+          estimatedTiles += tilesAtZoom * pack.layerIds.length;
+        }
+        pack.estimatedTiles = estimatedTiles;
+        pack.estimatedSizeMB = Math.round(estimatedTiles * 0.02);
+      }
+
+      // Save to database
+      await this.saveCustomPack(this.customPacks[packIndex]);
+
+      // Notify callbacks
+      this.customPackCallbacks.forEach(callback => callback([...this.customPacks]));
+
+      console.log(`✅ Updated custom pack: ${this.customPacks[packIndex].name}`);
+    } catch (error) {
+      console.error('Failed to update custom pack:', error);
+      throw error;
+    }
+  }
+
+  async deleteCustomPack(packId: string): Promise<void> {
+    try {
+      const packIndex = this.customPacks.findIndex(p => p.id === packId);
+      if (packIndex === -1) {
+        throw new Error(`Custom pack with ID ${packId} not found`);
+      }
+
+      const pack = this.customPacks[packIndex];
+
+      // Remove from array
+      this.customPacks.splice(packIndex, 1);
+
+      // Delete from database
+      if (this.db) {
+        const transaction = this.db.transaction(['customPacks'], 'readwrite');
+        const store = transaction.objectStore('customPacks');
+        await new Promise<void>((resolve, reject) => {
+          const request = store.delete(packId);
+          request.onsuccess = () => resolve();
+          request.onerror = () => reject(request.error);
+        });
+      }
+
+      // Cancel any active downloads for this pack
+      if (this.downloadQueue.has(packId)) {
+        this.cancelDownload(packId);
+      }
+
+      // Notify callbacks
+      this.customPackCallbacks.forEach(callback => callback([...this.customPacks]));
+
+      console.log(`✅ Deleted custom pack: ${pack.name}`);
+    } catch (error) {
+      console.error('Failed to delete custom pack:', error);
+      throw error;
+    }
+  }
+
+  async copyCustomPack(
+    packId: string, 
+    newName?: string, 
+    options?: {
+      zoomLevels?: number[];
+      layerIds?: string[];
+      description?: string;
+    }
+  ): Promise<string> {
+    try {
+      const originalPack = this.customPacks.find(p => p.id === packId);
+      if (!originalPack) {
+        throw new Error(`Custom pack with ID ${packId} not found`);
+      }
+
+      // Create new pack with updated options
+      const copyName = newName || `${originalPack.name} (Copy)`;
+      const copyZoomLevels = options?.zoomLevels || [...originalPack.zoomLevels];
+      const copyLayerIds = options?.layerIds || [...originalPack.layerIds];
+      const copyDescription = options?.description || `Copy of ${originalPack.description}`;
+
+      // Calculate new estimates based on updated zoom levels and layers
+      let estimatedTiles = 0;
+      for (const zoom of copyZoomLevels) {
+        const tilesAtZoom = this.estimatePolygonTiles(originalPack.polygon, zoom);
+        estimatedTiles += tilesAtZoom * copyLayerIds.length;
+      }
+
+      const copiedPack: CustomMapPack = {
+        id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        name: copyName,
+        description: copyDescription,
+        polygon: [...originalPack.polygon], // Deep copy of polygon
+        bounds: { ...originalPack.bounds }, // Copy bounds
+        center: { ...originalPack.center }, // Copy center
+        estimatedTiles,
+        estimatedSizeMB: Math.round(estimatedTiles * 0.02), // ~20KB per tile average
+        zoomLevels: copyZoomLevels,
+        layerIds: copyLayerIds,
+        created: new Date(),
+        isDownloaded: false,
+        downloadProgress: 0,
+        createdBy: 'user'
+      };
+
+      this.customPacks.push(copiedPack);
+      await this.saveCustomPack(copiedPack);
+      this.notifyCustomPacksChange();
+
+      console.log(`✅ Copied custom pack: ${originalPack.name} → ${copyName}`);
+      return copiedPack.id;
+    } catch (error) {
+      console.error('Failed to copy custom pack:', error);
+      throw error;
+    }
+  }
+
   // ==================== CLEANUP ====================
   async cleanup(): Promise<void> {
     if (this.db) {

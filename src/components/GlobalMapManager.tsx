@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import CopyMapPackModal from './CopyMapPackModal';
 import { Map as LeafletMap } from 'leaflet';
 import { 
   globalMapPackSystem, 
@@ -68,6 +69,9 @@ const GlobalMapManager: React.FC<Props> = ({
   // Custom pack editing
   const [editingPack, setEditingPack] = useState<CustomMapPack | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [copyingPack, setCopyingPack] = useState<CustomMapPack | null>(null);
+  const [showCopyModal, setShowCopyModal] = useState(false);
+  const [availableLayers, setAvailableLayers] = useState<{id: string; name: string}[]>([]);
 
   // Search state
   const [searchInput, setSearchInput] = useState('');
@@ -77,6 +81,26 @@ const GlobalMapManager: React.FC<Props> = ({
   const mapDrawingHandlerRef = useRef<((e: any) => void) | null>(null);
 
   // ==================== INITIALIZATION ====================
+  // Load available layers
+  useEffect(() => {
+    const loadLayers = async () => {
+      try {
+        const { getAvailableLayers } = await import('../config/mapLayers');
+        const layers = getAvailableLayers();
+        setAvailableLayers(layers.map(layer => ({ id: layer.id, name: layer.name })));
+      } catch (error) {
+        console.error('Failed to load available layers:', error);
+        // Fallback to basic layers
+        setAvailableLayers([
+          { id: 'openstreetmap', name: 'OpenStreetMap' },
+          { id: 'satellite', name: 'Satellite' },
+          { id: 'terrain', name: 'Terrain' }
+        ]);
+      }
+    };
+    loadLayers();
+  }, []);
+
   useEffect(() => {
     let unsubscribeNav: (() => void) | undefined;
     let unsubscribeCustom: (() => void) | undefined;
@@ -257,6 +281,14 @@ const GlobalMapManager: React.FC<Props> = ({
       console.error('Failed to delete custom pack:', error);
       alert('Failed to delete custom pack. Please try again.');
     }
+  };
+
+  const handleCopyCustomPack = async (packId: string) => {
+    const pack = customPacks.find(p => p.id === packId);
+    if (!pack) return;
+    
+    setCopyingPack(pack);
+    setShowCopyModal(true);
   };
 
   // ==================== NAVIGATION ====================
@@ -846,7 +878,8 @@ const GlobalMapManager: React.FC<Props> = ({
             <div className="text-sm text-gray-500 mt-2">
               <p>Polygon: {pack.polygon.length} points</p>
               <p>Tiles: {pack.estimatedTiles.toLocaleString()} • ~{pack.estimatedSizeMB}MB</p>
-              <p>Zoom: {pack.zoomLevels[0]}-{pack.zoomLevels[pack.zoomLevels.length - 1]}</p>
+              <p>Zoom: {pack.zoomLevels[0]}-{pack.zoomLevels[pack.zoomLevels.length - 1]} ({pack.zoomLevels.length} levels)</p>
+              <p>Layers: {pack.layerIds.length > 1 ? `${pack.layerIds.length} layers` : pack.layerIds[0] || 'openstreetmap'}</p>
               <p>Created: {pack.created.toLocaleDateString()}</p>
             </div>
           </div>
@@ -927,6 +960,16 @@ const GlobalMapManager: React.FC<Props> = ({
             >
               <span>{editingPolygonId === pack.id ? '🛑' : '🔧'}</span>
               <span>{editingPolygonId === pack.id ? 'Stop Edit' : 'Edit Shape'}</span>
+            </button>
+            
+            {/* Copy button */}
+            <button
+              onClick={() => handleCopyCustomPack(pack.id)}
+              className="px-3 py-1 bg-teal-500 text-white rounded text-sm hover:bg-teal-600 flex items-center space-x-1"
+              title={`Copy ${pack.name} with different settings`}
+            >
+              <span>📋</span>
+              <span>Copy</span>
             </button>
             
             <button
@@ -1674,6 +1717,51 @@ const GlobalMapManager: React.FC<Props> = ({
                   Save Changes
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Copy Modal */}
+        {showCopyModal && copyingPack && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                <h3 className="text-lg font-semibold">Copy Map Pack: {copyingPack.name}</h3>
+                <button
+                  onClick={() => setShowCopyModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              </div>
+              
+              <CopyMapPackModal 
+                originalPack={copyingPack}
+                availableLayers={availableLayers}
+                onCopy={async (options) => {
+                  try {
+                    const newPackId = await globalMapPackSystem.copyCustomPack(
+                      copyingPack.id,
+                      options.name,
+                      {
+                        zoomLevels: options.zoomLevels,
+                        layerIds: options.layerIds,
+                        description: options.description
+                      }
+                    );
+                    setShowCopyModal(false);
+                    setCopyingPack(null);
+                    console.log(`✅ Copied pack with ID: ${newPackId}`);
+                  } catch (error) {
+                    console.error('Failed to copy pack:', error);
+                    alert('Failed to copy map pack. Please try again.');
+                  }
+                }}
+                onCancel={() => {
+                  setShowCopyModal(false);
+                  setCopyingPack(null);
+                }}
+              />
             </div>
           </div>
         )}
