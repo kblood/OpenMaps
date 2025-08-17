@@ -20,7 +20,7 @@ interface Props {
   onClose: () => void;
   mapInstance?: LeafletMap;
   polygonPoints?: [number, number][];
-  onPolygonPointsChange?: (points: [number, number][]) => void;
+  onPolygonPointsChange?: (points: [number, number][] | ((prev: [number, number][]) => [number, number][])) => void;
   showPolygonPreview?: boolean;
   onShowPolygonPreviewChange?: (show: boolean) => void;
   isDrawingPolygon?: boolean;
@@ -152,11 +152,16 @@ const GlobalMapManager: React.FC<Props> = ({
       const lng = e.latlng?.lng || e.lng;
       
       if (lat && lng) {
-        // Get current points from the latest props state
-        const currentPoints = polygonPoints || [];
-        const next = [...currentPoints, [lat, lng] as [number, number]];
-        console.log('📍 Adding point:', [lat, lng], 'Total points:', next.length);
-        onPolygonPointsChange?.(next);
+        // Update by getting current state and appending new point
+        const newPoint: [number, number] = [lat, lng];
+        console.log('📍 Adding point:', newPoint);
+        
+        // Use functional update to ensure we get latest state
+        onPolygonPointsChange?.(prev => {
+          const next = [...(prev || []), newPoint];
+          console.log('Total points now:', next.length);
+          return next;
+        });
       }
     };
 
@@ -866,6 +871,11 @@ const GlobalMapManager: React.FC<Props> = ({
     const downloadProgress = downloads.get(pack.id);
     const isDownloading = downloadProgress?.status === 'downloading';
     
+    // Calculate expected polygon ID for editing state comparison
+    const customPacks = globalMapPackSystem.getCustomPacks();
+    const packIndex = customPacks.findIndex(p => p.id === pack.id);
+    const expectedPolygonId = packIndex !== -1 ? `custom-pack-${packIndex}` : null;
+    
     return (
       <div key={pack.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
         <div className="flex items-start justify-between">
@@ -945,21 +955,21 @@ const GlobalMapManager: React.FC<Props> = ({
             {/* Edit Polygon button */}
             <button
               onClick={() => {
-                if (editingPolygonId === pack.id) {
+                if (editingPolygonId === expectedPolygonId) {
                   onStopPolygonEdit?.();
                 } else {
                   onEditCustomPackPolygon?.(pack.id);
                 }
               }}
               className={`px-3 py-1 rounded text-sm flex items-center space-x-1 ${
-                editingPolygonId === pack.id
+                editingPolygonId === expectedPolygonId
                   ? 'bg-orange-500 text-white hover:bg-orange-600'
                   : 'bg-purple-500 text-white hover:bg-purple-600'
               }`}
-              title={editingPolygonId === pack.id ? 'Stop editing polygon' : 'Edit polygon shape'}
+              title={editingPolygonId === expectedPolygonId ? 'Stop editing polygon' : 'Edit polygon shape'}
             >
-              <span>{editingPolygonId === pack.id ? '🛑' : '🔧'}</span>
-              <span>{editingPolygonId === pack.id ? 'Stop Edit' : 'Edit Shape'}</span>
+              <span>{editingPolygonId === expectedPolygonId ? '🛑' : '🔧'}</span>
+              <span>{editingPolygonId === expectedPolygonId ? 'Stop Edit' : 'Edit Shape'}</span>
             </button>
             
             {/* Copy button */}

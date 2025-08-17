@@ -11,11 +11,14 @@
 - **Dynamic Loading**: Smaller locations load on-demand when online
 - **Level Navigation**: Jump directly to any hierarchy level via dropdown menu
 
-### ✏️ **Advanced Polygon Drawing System**
+### ✏️ **Advanced Polygon Drawing & Editing System**
 - **Interactive Drawing**: Click on map to define custom areas with precise polygon boundaries
+- **Professional Editing**: Drag vertices, multi-select with Ctrl+Click, insert/delete points
 - **Smart Estimation**: Automatic tile count and size calculation based on zoom levels
-- **Flexible Configuration**: Choose zoom ranges (1-15), map layers, and custom descriptions
+- **Flexible Configuration**: Choose zoom ranges (1-18), map layers, and custom descriptions
 - **Real-time Preview**: See your polygon and estimated download size as you draw
+- **Performance Optimized**: Handles large polygons (1000+ points) with zoom-aware rendering
+- **Auto-Fit Editing**: Map automatically fits to polygon bounds for optimal editing experience
 
 ### ⚡ **Ultra-Fast Download System**
 - **20x Parallel Downloads**: Download up to 20 tiles simultaneously for maximum speed
@@ -74,16 +77,32 @@ npm run electron:dev
 3. **Search Globally**: Type any location name for instant fuzzy-matched results with population data
 4. **Download Areas**: Click "Download" on any location to cache it for offline use
 
-### **Creating Custom Map Areas with Polygon Drawing**
+### **Creating & Editing Custom Map Areas**
 
+#### **Drawing New Polygons**
 1. **Switch to Draw Area Tab**: Click the "✏️ Draw Area" tab in the Map Pack Manager
 2. **Start Drawing**: Click "Start Drawing Polygon" and click points on the map to define your area
-3. **Configure Settings**:
+3. **Complete Drawing**: Click "Finish Drawing" or the last point to close the polygon
+4. **Configure Settings**:
    - Enter a descriptive name and optional description
-   - Choose zoom levels (higher = more detail, larger file size)
-   - Select map layers (OpenStreetMap, Satellite, etc.)
-4. **Create Pack**: Click "Create Custom Pack" to generate your downloadable area
-5. **Download**: Your custom pack appears in the Custom Packs tab, ready for download
+   - Choose zoom levels (1-18: higher = more detail, larger file size)
+   - Select map layers (OpenStreetMap, Satellite, Terrain, etc.)
+5. **Create Pack**: Click "Create Custom Pack" to generate your downloadable area
+
+#### **Editing Existing Polygons**
+1. **Open Custom Packs Tab**: Navigate to your saved custom polygons
+2. **Start Editing**: Click "Edit Shape" button on any custom pack
+3. **Edit Vertices**: 
+   - **Drag points** to reposition them
+   - **Ctrl+Click** to select multiple points
+   - **Click gray midpoints** to insert new vertices
+   - **Delete button** to remove selected points
+4. **Finish Editing**: Click "Finish Editing" to save your changes
+5. **Performance**: Large polygons automatically optimize point visibility based on zoom level
+
+#### **Download & Management**
+- **Download**: Your custom pack appears in the Custom Packs tab, ready for download
+- **Copy Packs**: Use the copy button to create variations with different zoom/layer settings
 
 ### **Managing Downloads & Progress**
 
@@ -101,6 +120,9 @@ npm run electron:dev
 | Tile Deduplication | None | Smart sharing across packs | **50-80% storage savings** |
 | Search Performance | Basic text match | Fuzzy search with ranking | **Advanced relevance** |
 | Hierarchy Navigation | None | 7-level global structure | **Intuitive browsing** |
+| Polygon Drawing | Single point placement | Multi-point sequential drawing | **Fixed drawing workflow** |
+| Polygon Editing | Fixed zoom, poor UX | Auto-fit bounds, optimized UI | **Professional editing** |
+| Large Polygon Performance | Slow, cluttered | Zoom-aware rendering | **1000+ points supported** |
 
 ## 🏗️ Architecture
 
@@ -413,3 +435,20 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 **🌍 Built with ❤️ for offline-first mapping experiences worldwide**
 
 *OpenMaps - Making global maps accessible everywhere, online or offline* ✨
+ 
+## Dynamic Explorer: backend-only data flow (no fallbacks)
+
+Child loading relies solely on the local backend. No third‑party fallbacks are used.
+- Country → Regions/States: http://localhost:3001/api/admin/regions?country=CC
+- State/Region → Cities: http://localhost:3001/api/admin/cities?relationId=... or ?bbox=...
+- Municipality/City/District: treated as leaves unless explicit backend support is added
+
+Caching and refresh:
+- Successful loads are cached in memory and IndexedDB. Empty results are not cached.
+- Clicking a node’s Refresh forces a backend fetch. If the request fails, existing cached children are preserved and the UI shows “Refresh failed. Showing cached data.”
+- Use the global Refresh Data button to clear caches and reload core data.
+
+Troubleshooting missing cities:
+- Ensure the backend is running and healthy on port 3001.
+- Check backend logs for the regions/cities endpoints.
+- After starting/fixing the backend, use the node Refresh to repopulate children.

@@ -62,14 +62,18 @@ interface MapProps {
   editablePolygons?: Map<string, [number, number][]>;
 }
 
-function MapEventHandler({ onMapClick, onContextMenu, onMapMoveEnd }: { 
+function MapEventHandler({ onMapClick, onContextMenu, onMapMoveEnd, isDrawingPolygon }: { 
   onMapClick: (location: Location) => void; 
   onContextMenu?: (location: Location) => void;
   onMapMoveEnd?: (center: Location, zoom: number) => void;
+  isDrawingPolygon?: boolean;
 }) {
   useMapEvents({
     click: (e) => {
-      onMapClick({ lat: e.latlng.lat, lng: e.latlng.lng });
+      // Don't handle regular map clicks when drawing polygons
+      if (!isDrawingPolygon) {
+        onMapClick({ lat: e.latlng.lat, lng: e.latlng.lng });
+      }
     },
     contextmenu: (e) => {
       if (onContextMenu) {
@@ -192,7 +196,7 @@ const MapComponent: React.FC<MapProps> = ({
     >
       <OfflineTileLayerComponent currentLayer={currentLayer} />
       
-      <MapEventHandler onMapClick={onMapClick} onContextMenu={handleContextMenu} onMapMoveEnd={onMapMoveEnd} />
+      <MapEventHandler onMapClick={onMapClick} onContextMenu={handleContextMenu} onMapMoveEnd={onMapMoveEnd} isDrawingPolygon={isDrawingPolygon} />
       <MapReadyHandler onMapReady={onMapReady} />
       <MapCenterHandler center={center} zoom={zoom} />
       
@@ -327,24 +331,27 @@ const MapComponent: React.FC<MapProps> = ({
       )}
       
       {/* Custom Pack Polygons with Editing Support */}
-      {customPackPolygons.length > 0 && customPackPolygons.map((polygon, index) => (
-        polygon.length >= 3 && (
+      {customPackPolygons.length > 0 && customPackPolygons.map((polygon, index) => {
+        const polygonId = `custom-pack-${index}`;
+        const isEditing = editingPolygonId === polygonId;
+        
+        return polygon.length >= 3 && (
           <PolygonEditor
-            key={`custom-pack-${index}`}
+            key={polygonId}
             polygon={polygon}
             onPolygonChange={(newPolygon) => {
               if (onPolygonEdit) {
-                onPolygonEdit(`custom-pack-${index}`, newPolygon);
+                onPolygonEdit(polygonId, newPolygon);
               }
             }}
-            isEditing={editingPolygonId === `custom-pack-${index}`}
+            isEditing={isEditing}
             color="#8B5CF6"
             fillColor="#A855F7"
             editable={true}
             className="custom-pack-polygon"
           />
-        )
-      ))}
+        );
+      })}
       
       {/* Editable Polygons from EditablePolygons Map */}
       {Array.from(editablePolygons.entries()).map(([polygonId, polygon]) => (

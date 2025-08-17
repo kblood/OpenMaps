@@ -73,19 +73,24 @@ Revolutionary polygon editing system for precise map pack boundary management:
 - **Point Insertion**: Click gray midpoint markers to add new vertices
 - **Point Deletion**: Remove individual or multiple points with validation
 - **Visual Feedback**: Color-coded editing states and real-time polygon updates
+- **Performance Optimization**: Adaptive rendering for large polygons (100+ points)
+- **Zoom-Aware Display**: Point density adjusts based on map zoom level
 
 **User Interface Features**:
 - 🔵 **Draggable Points**: Blue/purple markers for existing vertices
 - 🟢 **Selected Points**: Green highlighting for selected vertices
-- ⚪ **Insertion Points**: Gray midpoint markers for adding new vertices
+- ⚪ **Insertion Points**: Gray midpoint markers for adding new vertices (optimized for large polygons)
 - 📐 **Selection Outline**: Dashed line connecting multi-selected points
 - 🔧 **Floating Toolbar**: Context-sensitive editing instructions
+- 🎯 **Smart Zoom**: Auto-fits map to polygon bounds when editing starts
+- ⚡ **Adaptive UI**: Reduces visual clutter on large polygons at low zoom levels
 
 **Integration Points**:
 - Custom map pack editing via "Edit Shape" button
 - Real-time polygon validation and saving
 - Seamless integration with existing map pack system
 - Support for complex administrative boundary polygons
+- Optimized for shapes with hundreds of vertices
 
 ### Multi-Layer Map Pack System
 Advanced multi-layer support with flexible configuration options:
@@ -194,6 +199,14 @@ When modifying the polygon editing features:
 - Check that drag operations update polygon data correctly
 - Verify "Edit Shape" button toggles editing mode properly
 - Test floating toolbar appears/disappears correctly
+- **Performance Testing**: Test with very large polygons (200+ points) to verify:
+  - Zoom-aware point rendering works correctly
+  - Midpoint optimization reduces visual clutter
+  - Selected points remain visible even when others are hidden
+- **Drawing Mode Testing**: Verify polygon drawing works correctly:
+  - Multiple points can be placed in sequence
+  - Map click events don't interfere with point placement
+  - Drawing mode indicator shows current progress
 
 ### Working with Multi-Layer Map Pack System
 When modifying the multi-layer features:
@@ -285,7 +298,11 @@ GRAPHHOPPER_BASE_URL=https://graphhopper.com/api/1/route
 - **Insertion points not visible**: Ensure polygon has enough points (≥3) and editing mode is active
 - **Polygon not saving**: Check `globalMapPackSystem.updateCustomPack()` calls in browser console
 - **Floating toolbar missing**: Verify `editingPolygonId` state is not null
-- **Performance issues**: Test with simplified polygons (use polygon simplification for 1000+ points)
+- **Performance issues**: Performance is now optimized for large polygons (up to 1000+ points)
+- **Drawing not working**: Check that `isDrawingPolygon` state prevents map click interference
+- **Points only show first one**: Verify functional state updates in `onPolygonPointsChange` callback
+- **Forced zoom on edit**: Map now auto-fits to polygon bounds instead of fixed zoom level
+- **Too many points visible**: Point density now adapts to zoom level for better performance
 
 ### Multi-Layer Map Pack Issues
 - **Copy button not working**: Check `globalMapPackSystem.copyCustomPack()` method implementation

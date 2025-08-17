@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { CircleMarker, Polygon, Polyline, Popup, Marker } from 'react-leaflet';
+import { Polygon, Popup, Marker, useMap, Polyline } from 'react-leaflet';
 import { LatLngExpression } from 'leaflet';
 import L from 'leaflet';
 
@@ -65,25 +65,55 @@ const PolygonEditor: React.FC<PolygonEditorProps> = ({
   editable = true,
   className = ''
 }) => {
+  const map = useMap();
   const [selectedPoints, setSelectedPoints] = useState<Set<string>>(new Set());
   const [insertionPoints, setInsertionPoints] = useState<EditablePoint[]>([]);
+  const [currentZoom, setCurrentZoom] = useState(map.getZoom());
 
-  // Generate point IDs
+  // Listen for zoom changes
+  useEffect(() => {
+    const handleZoomEnd = () => {
+      setCurrentZoom(map.getZoom());
+    };
+    
+    map.on('zoomend', handleZoomEnd);
+    return () => {
+      map.off('zoomend', handleZoomEnd);
+    };
+  }, [map]);
+
+  // Generate point IDs with zoom-based optimization
+  const shouldReducePoints = polygon.length > 50 && currentZoom < 10;
+  const pointSkipFactor = polygon.length > 200 ? 4 : polygon.length > 100 ? 3 : 2;
+  
   const points: EditablePoint[] = polygon.map((pos, index) => ({
     id: `point-${index}`,
     position: pos,
     isSelected: selectedPoints.has(`point-${index}`)
-  }));
+  })).filter((_, index) => {
+    // At low zoom levels with many points, only show every Nth point
+    if (shouldReducePoints) {
+      return index % pointSkipFactor === 0 || selectedPoints.has(`point-${index}`);
+    }
+    return true;
+  });
 
-  // Calculate midpoints for insertion when editing
+  // Calculate midpoints for insertion when editing (optimized for large polygons)
   useEffect(() => {
     if (!isEditing || polygon.length < 2) {
       setInsertionPoints([]);
       return;
     }
 
+    // For very large polygons (>100 points), reduce midpoint density
+    const shouldSkipMidpoints = polygon.length > 100;
+    const skipFactor = polygon.length > 500 ? 5 : polygon.length > 200 ? 3 : 2;
+
     const midpoints: EditablePoint[] = [];
     for (let i = 0; i < polygon.length; i++) {
+      // Skip some midpoints for large polygons to improve performance
+      if (shouldSkipMidpoints && i % skipFactor !== 0) continue;
+      
       const current = polygon[i];
       const next = polygon[(i + 1) % polygon.length];
       

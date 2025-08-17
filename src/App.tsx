@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { Map as LeafletMap } from 'leaflet';
+import L from 'leaflet';
 import MapContainer from './components/Map/MapContainer';
 import SearchBar from './components/Search/SearchBar';
 import RoutePanel from './components/Routing/RoutePanel';
@@ -412,8 +413,7 @@ function App() {
           [centerLat - halfAdjustedLatSize - latPadding, centerLng - halfAdjustedLngSize - lngPadding],  // southwest
           [centerLat - halfAdjustedLatSize - latPadding, centerLng + halfAdjustedLngSize + lngPadding],  // southeast
           [centerLat + halfAdjustedLatSize + latPadding, centerLng + halfAdjustedLngSize + lngPadding],  // northeast
-          [centerLat + halfAdjustedLatSize + latPadding, centerLng - halfAdjustedLngSize - lngPadding],  // northwest
-          [centerLat - halfAdjustedLatSize - latPadding, centerLng - halfAdjustedLngSize - lngPadding]   // close the polygon
+          [centerLat + halfAdjustedLatSize + latPadding, centerLng - halfAdjustedLngSize - lngPadding]   // northwest
         ];
         
         const finalLatSize = (adjustedLatSize + 2 * latPadding);
@@ -460,8 +460,7 @@ function App() {
           [lat - boundsSize, lng - boundsSize], // southwest
           [lat - boundsSize, lng + boundsSize], // southeast
           [lat + boundsSize, lng + boundsSize], // northeast
-          [lat + boundsSize, lng - boundsSize], // northwest
-          [lat - boundsSize, lng - boundsSize]  // close the polygon
+          [lat + boundsSize, lng - boundsSize]  // northwest
         ];
         
         const areaKm = Math.round(boundsSize * 222); // Rough km conversion
@@ -659,9 +658,19 @@ function App() {
           // Ensure the polygon is visible
           handleSelectCustomPack(packId, true);
           
-          // Center map on the pack
-          if (map) {
-            map.setView([pack.center.lat, pack.center.lng], 12);
+          // Fit map to show the entire polygon
+          if (map && pack.polygon && pack.polygon.length > 0) {
+            // Calculate bounds from polygon points
+            const latitudes = pack.polygon.map(point => point[0]);
+            const longitudes = pack.polygon.map(point => point[1]);
+            
+            const bounds = L.latLngBounds([
+              [Math.min(...latitudes), Math.min(...longitudes)],
+              [Math.max(...latitudes), Math.max(...longitudes)]
+            ]);
+            
+            // Fit bounds with padding to ensure all corners are visible
+            map.fitBounds(bounds, { padding: [50, 50] });
           }
         }
       }
