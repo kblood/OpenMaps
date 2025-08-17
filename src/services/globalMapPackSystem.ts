@@ -42,6 +42,8 @@ export interface CustomMapPack {
   estimatedSizeMB: number;
   zoomLevels: number[];
   layerIds: string[];
+  enableOfflineRouting?: boolean;
+  routingEngine?: 'brouter' | 'internal';
   created: Date;
   isDownloaded: boolean;
   downloadProgress?: number;
@@ -78,6 +80,7 @@ export class GlobalMapPackSystem {
   private db: IDBDatabase | null = null;
   private downloadQueue: Map<string, DownloadProgress> = new Map();
   private maxConcurrentDownloads = 20;
+  private backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
   private navigationState: NavigationState;
   private customPacks: CustomMapPack[] = [];
   private globalNodes: GlobalMapNode[] = [];
@@ -85,6 +88,22 @@ export class GlobalMapPackSystem {
   private navigationCallbacks: ((state: NavigationState) => void)[] = [];
   private customPackCallbacks: ((packs: CustomMapPack[]) => void)[] = [];
   private cancelledDownloads: Set<string> = new Set();
+
+  // Generate proxy URL for tile downloads to avoid CORS issues
+  private generateTileProxyUrl(layerId: string, z: number, x: number, y: number): string {
+    // Map layer IDs to provider names for the proxy
+    const providerMap: { [key: string]: string } = {
+      'openstreetmap': 'osm',
+      'osm': 'osm',
+      'satellite': 'satellite',
+      'terrain': 'terrain'
+    };
+    
+    const provider = providerMap[layerId] || 'osm';
+    const ext = 'png'; // Default extension
+    
+    return `${this.backendUrl}/api/tiles/proxy/${provider}/${z}/${x}/${y}.${ext}`;
+  }
 
   constructor() {
     this.navigationState = {
@@ -342,7 +361,7 @@ export class GlobalMapPackSystem {
       for (let x = minTileX; x <= maxTileX; x++) {
         for (let y = minTileY; y <= maxTileY; y++) {
           for (const layerId of layerIds) {
-            const url = `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+            const url = this.generateTileProxyUrl(layerId, z, x, y);
             tiles.push({
               x, y, z,
               url,
@@ -585,7 +604,9 @@ export class GlobalMapPackSystem {
       description!,
       polygon,
       zoomLevels!,
-      layerIds!
+      layerIds!,
+      false, // Default: no offline routing for dynamic packs
+      'brouter' // Default routing engine
     );
     return packId;
   }
@@ -602,11 +623,16 @@ export class GlobalMapPackSystem {
     description: string,
     polygon: [number, number][],
     zoomLevels: number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
-    layerIds: string[] = ['openstreetmap']
+    layerIds: string[] = ['openstreetmap'],
+    enableOfflineRouting: boolean = false,
+    routingEngine: 'brouter' | 'internal' = 'brouter'
   ): Promise<string> {
-    // Calculate bounds from polygon
-    const lats = polygon.map(p => p[0]);
-    const lngs = polygon.map(p => p[1]);
+    // Clean polygon: remove duplicate points (especially duplicate first/last points)
+    const cleanedPolygon = this.cleanPolygonPoints(polygon);
+    
+    // Calculate bounds from cleaned polygon
+    const lats = cleanedPolygon.map(p => p[0]);
+    const lngs = cleanedPolygon.map(p => p[1]);
     const bounds = {
       north: Math.max(...lats),
       south: Math.min(...lats),
@@ -623,7 +649,7 @@ export class GlobalMapPackSystem {
     // Estimate tiles
     let estimatedTiles = 0;
     for (const zoom of zoomLevels) {
-      const tilesAtZoom = this.estimatePolygonTiles(polygon, zoom);
+      const tilesAtZoom = this.estimatePolygonTiles(cleanedPolygon, zoom);
       estimatedTiles += tilesAtZoom * layerIds.length;
     }
 
@@ -631,13 +657,15 @@ export class GlobalMapPackSystem {
       id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       name,
       description,
-      polygon,
+      polygon: cleanedPolygon,
       bounds,
       center,
       estimatedTiles,
       estimatedSizeMB: Math.round(estimatedTiles * 0.02), // ~20KB per tile average
       zoomLevels,
       layerIds,
+      enableOfflineRouting,
+      routingEngine,
       created: new Date(),
       isDownloaded: false,
       downloadProgress: 0,
@@ -650,6 +678,82 @@ export class GlobalMapPackSystem {
 
     console.log(`📍 Created custom pack: ${name} (${estimatedTiles} tiles, ~${customPack.estimatedSizeMB}MB)`);
     return customPack.id;
+  }
+
+  private cleanPolygonPoints(polygon: [number, number][]): [number, number][] {
+    if (polygon.length < 3) return polygon;
+    
+    // Remove duplicate points, especially duplicate first/last points
+    const cleaned: [number, number][] = [];
+    const tolerance = 0.0000001; // Very small tolerance for floating point comparison
+    
+    for (let i = 0; i < polygon.length; i++) {
+      const current = polygon[i];
+      const prev = cleaned[cleaned.length - 1];
+      
+      // Add point if it's the first one or if it's different from the previous point
+      if (!prev || 
+          Math.abs(current[0] - prev[0]) > tolerance || 
+          Math.abs(current[1] - prev[1]) > tolerance) {
+        cleaned.push(current);
+      }
+    }
+    
+    // Check if last point is the same as first point (common in "closed" polygons)
+    if (cleaned.length > 3) {
+      const first = cleaned[0];
+      const last = cleaned[cleaned.length - 1];
+      if (Math.abs(first[0] - last[0]) <= tolerance && 
+          Math.abs(first[1] - last[1]) <= tolerance) {
+        cleaned.pop(); // Remove the duplicate last point
+      }
+    }
+    
+    console.log(`🧹 Cleaned polygon: ${polygon.length} → ${cleaned.length} points`);
+    return cleaned;
+  }
+
+  // Clean up existing custom packs that might have duplicate points
+  async cleanupExistingCustomPacks(): Promise<void> {
+    console.log('🧹 Cleaning up existing custom packs...');
+    let cleanedCount = 0;
+    
+    for (const pack of this.customPacks) {
+      const originalLength = pack.polygon.length;
+      const cleanedPolygon = this.cleanPolygonPoints(pack.polygon);
+      
+      if (cleanedPolygon.length !== originalLength) {
+        console.log(`🧹 Cleaning pack "${pack.name}": ${originalLength} → ${cleanedPolygon.length} points`);
+        
+        // Update the pack with cleaned polygon
+        pack.polygon = cleanedPolygon;
+        
+        // Recalculate bounds and center
+        const lats = cleanedPolygon.map(p => p[0]);
+        const lngs = cleanedPolygon.map(p => p[1]);
+        pack.bounds = {
+          north: Math.max(...lats),
+          south: Math.min(...lats),
+          east: Math.max(...lngs),
+          west: Math.min(...lngs)
+        };
+        pack.center = {
+          lat: (pack.bounds.north + pack.bounds.south) / 2,
+          lng: (pack.bounds.east + pack.bounds.west) / 2
+        };
+        
+        // Save the updated pack
+        await this.saveCustomPack(pack);
+        cleanedCount++;
+      }
+    }
+    
+    if (cleanedCount > 0) {
+      console.log(`✅ Cleaned ${cleanedCount} custom packs`);
+      this.notifyCustomPacksChange();
+    } else {
+      console.log('✅ No custom packs needed cleaning');
+    }
   }
 
   private estimatePolygonTiles(polygon: [number, number][], zoom: number): number {
@@ -672,13 +776,18 @@ export class GlobalMapPackSystem {
     return (maxTileX - minTileX + 1) * (maxTileY - minTileY + 1);
   }
 
-  async downloadCustomPack(packId: string): Promise<void> {
+  async downloadCustomPack(packId: string, forceRedownload: boolean = false): Promise<void> {
     const pack = this.customPacks.find(p => p.id === packId);
     if (!pack) {
       throw new Error(`Custom pack ${packId} not found`);
     }
 
-    console.log(`📍 Starting download for custom pack: ${pack.name}`);
+    if (pack.isDownloaded && !forceRedownload) {
+      console.log(`📍 Pack ${pack.name} already downloaded. Use forceRedownload=true to re-download.`);
+      return;
+    }
+
+    console.log(`📍 ${forceRedownload ? 'Re-downloading' : 'Starting download for'} custom pack: ${pack.name}`);
     
     const progress: DownloadProgress = {
       current: 0,
@@ -741,7 +850,7 @@ export class GlobalMapPackSystem {
       for (let x = minTileX; x <= maxTileX; x++) {
         for (let y = minTileY; y <= maxTileY; y++) {
           for (const layerId of layerIds) {
-            const url = `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`;
+            const url = this.generateTileProxyUrl(layerId, zoom, x, y);
             tiles.push({
               x, y, z: zoom,
               url,
@@ -828,6 +937,30 @@ export class GlobalMapPackSystem {
     return new Promise((resolve, reject) => {
       request.onsuccess = () => {
         this.customPacks = request.result || [];
+        
+        // Migrate legacy custom packs that may not have layerIds or routing properties
+        let migrationNeeded = false;
+        for (const pack of this.customPacks) {
+          if (!pack.layerIds || pack.layerIds.length === 0) {
+            pack.layerIds = ['openstreetmap']; // Default to OSM for legacy packs
+            migrationNeeded = true;
+          }
+          if (pack.enableOfflineRouting === undefined) {
+            pack.enableOfflineRouting = false; // Default to disabled
+            migrationNeeded = true;
+          }
+          if (!pack.routingEngine) {
+            pack.routingEngine = 'brouter'; // Default routing engine
+            migrationNeeded = true;
+          }
+        }
+        
+        // Save migrated packs back to database
+        if (migrationNeeded) {
+          console.log('🔧 Migrating legacy custom packs with missing layer/routing configuration');
+          Promise.all(this.customPacks.map(pack => this.saveCustomPack(pack))).catch(console.error);
+        }
+        
         resolve();
       };
       request.onerror = () => reject(request.error);
@@ -1623,6 +1756,248 @@ export class GlobalMapPackSystem {
       estimatedTiles,
       estimatedSizeMB
     };
+  }
+
+  // ==================== OFFLINE TILE MANAGEMENT ====================
+  async getOfflineTileStatistics(): Promise<{
+    totalTiles: number;
+    totalSizeMB: number;
+    tilesByLayer: { [layerId: string]: { count: number; sizeMB: number } };
+    tilesByPack: { [packId: string]: { count: number; sizeMB: number; packName: string } };
+    unassociatedTiles: { count: number; sizeMB: number };
+  }> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const transaction = this.db.transaction(['tiles'], 'readonly');
+    const store = transaction.objectStore('tiles');
+    const request = store.getAll();
+
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => {
+        const tiles = request.result || [];
+        const stats = {
+          totalTiles: tiles.length,
+          totalSizeMB: 0,
+          tilesByLayer: {} as { [layerId: string]: { count: number; sizeMB: number } },
+          tilesByPack: {} as { [packId: string]: { count: number; sizeMB: number; packName: string } },
+          unassociatedTiles: { count: 0, sizeMB: 0 }
+        };
+
+        for (const tile of tiles) {
+          const sizeMB = (tile.blob?.size || 20000) / (1024 * 1024); // Estimate 20KB if no size
+          stats.totalSizeMB += sizeMB;
+
+          // Count by layer
+          if (!stats.tilesByLayer[tile.layerId]) {
+            stats.tilesByLayer[tile.layerId] = { count: 0, sizeMB: 0 };
+          }
+          stats.tilesByLayer[tile.layerId].count++;
+          stats.tilesByLayer[tile.layerId].sizeMB += sizeMB;
+
+          // Count by pack (check if tile's coordinates match any pack)
+          let foundPack = false;
+          for (const pack of this.customPacks) {
+            if (this.isTileInPack(tile, pack)) {
+              if (!stats.tilesByPack[pack.id]) {
+                stats.tilesByPack[pack.id] = { count: 0, sizeMB: 0, packName: pack.name };
+              }
+              stats.tilesByPack[pack.id].count++;
+              stats.tilesByPack[pack.id].sizeMB += sizeMB;
+              foundPack = true;
+              break;
+            }
+          }
+
+          if (!foundPack) {
+            stats.unassociatedTiles.count++;
+            stats.unassociatedTiles.sizeMB += sizeMB;
+          }
+        }
+
+        // Round all size values
+        stats.totalSizeMB = Math.round(stats.totalSizeMB * 100) / 100;
+        Object.values(stats.tilesByLayer).forEach(layer => {
+          layer.sizeMB = Math.round(layer.sizeMB * 100) / 100;
+        });
+        Object.values(stats.tilesByPack).forEach(pack => {
+          pack.sizeMB = Math.round(pack.sizeMB * 100) / 100;
+        });
+        stats.unassociatedTiles.sizeMB = Math.round(stats.unassociatedTiles.sizeMB * 100) / 100;
+
+        resolve(stats);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  private isTileInPack(tile: any, pack: CustomMapPack): boolean {
+    // Check if tile's layer is in pack's layers
+    if (!pack.layerIds.includes(tile.layerId)) return false;
+    
+    // Check if tile's zoom level is in pack's zoom levels
+    if (!pack.zoomLevels.includes(tile.z)) return false;
+    
+    // Check if tile coordinates are within pack bounds (simplified check)
+    const lat = this.tileToLat(tile.y, tile.z);
+    const lng = this.tileToLng(tile.x, tile.z);
+    
+    return lat >= pack.bounds.south && lat <= pack.bounds.north &&
+           lng >= pack.bounds.west && lng <= pack.bounds.east;
+  }
+
+  private tileToLat(y: number, z: number): number {
+    const n = Math.PI - 2 * Math.PI * y / Math.pow(2, z);
+    return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+  }
+
+  private tileToLng(x: number, z: number): number {
+    return x / Math.pow(2, z) * 360 - 180;
+  }
+
+  async deleteOfflineTilesByLayer(layerId: string): Promise<number> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const transaction = this.db.transaction(['tiles'], 'readwrite');
+    const store = transaction.objectStore('tiles');
+    
+    // Get all tiles for this layer
+    const getAllRequest = store.getAll();
+    
+    return new Promise((resolve, reject) => {
+      getAllRequest.onsuccess = () => {
+        const allTiles = getAllRequest.result || [];
+        const tilesToDelete = allTiles.filter(tile => tile.layerId === layerId);
+        
+        let deletedCount = 0;
+        let completed = 0;
+        
+        if (tilesToDelete.length === 0) {
+          resolve(0);
+          return;
+        }
+        
+        for (const tile of tilesToDelete) {
+          const deleteRequest = store.delete(tile.key);
+          deleteRequest.onsuccess = () => {
+            deletedCount++;
+            completed++;
+            if (completed === tilesToDelete.length) {
+              resolve(deletedCount);
+            }
+          };
+          deleteRequest.onerror = () => {
+            completed++;
+            if (completed === tilesToDelete.length) {
+              resolve(deletedCount);
+            }
+          };
+        }
+      };
+      getAllRequest.onerror = () => reject(getAllRequest.error);
+    });
+  }
+
+  async deleteOfflineTilesByPack(packId: string): Promise<number> {
+    const pack = this.customPacks.find(p => p.id === packId);
+    if (!pack) {
+      throw new Error(`Pack ${packId} not found`);
+    }
+
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const transaction = this.db.transaction(['tiles'], 'readwrite');
+    const store = transaction.objectStore('tiles');
+    
+    const getAllRequest = store.getAll();
+    
+    return new Promise((resolve, reject) => {
+      getAllRequest.onsuccess = () => {
+        const allTiles = getAllRequest.result || [];
+        const tilesToDelete = allTiles.filter(tile => this.isTileInPack(tile, pack));
+        
+        let deletedCount = 0;
+        let completed = 0;
+        
+        if (tilesToDelete.length === 0) {
+          resolve(0);
+          return;
+        }
+        
+        for (const tile of tilesToDelete) {
+          const deleteRequest = store.delete(tile.key);
+          deleteRequest.onsuccess = () => {
+            deletedCount++;
+            completed++;
+            if (completed === tilesToDelete.length) {
+              // Update pack status
+              pack.isDownloaded = false;
+              pack.downloadProgress = 0;
+              this.saveCustomPack(pack);
+              resolve(deletedCount);
+            }
+          };
+          deleteRequest.onerror = () => {
+            completed++;
+            if (completed === tilesToDelete.length) {
+              resolve(deletedCount);
+            }
+          };
+        }
+      };
+      getAllRequest.onerror = () => reject(getAllRequest.error);
+    });
+  }
+
+  async deleteUnassociatedTiles(): Promise<number> {
+    if (!this.db) {
+      throw new Error('Database not initialized');
+    }
+
+    const transaction = this.db.transaction(['tiles'], 'readwrite');
+    const store = transaction.objectStore('tiles');
+    
+    const getAllRequest = store.getAll();
+    
+    return new Promise((resolve, reject) => {
+      getAllRequest.onsuccess = () => {
+        const allTiles = getAllRequest.result || [];
+        const tilesToDelete = allTiles.filter(tile => {
+          return !this.customPacks.some(pack => this.isTileInPack(tile, pack));
+        });
+        
+        let deletedCount = 0;
+        let completed = 0;
+        
+        if (tilesToDelete.length === 0) {
+          resolve(0);
+          return;
+        }
+        
+        for (const tile of tilesToDelete) {
+          const deleteRequest = store.delete(tile.key);
+          deleteRequest.onsuccess = () => {
+            deletedCount++;
+            completed++;
+            if (completed === tilesToDelete.length) {
+              resolve(deletedCount);
+            }
+          };
+          deleteRequest.onerror = () => {
+            completed++;
+            if (completed === tilesToDelete.length) {
+              resolve(deletedCount);
+            }
+          };
+        }
+      };
+      getAllRequest.onerror = () => reject(getAllRequest.error);
+    });
   }
 
   // ==================== CUSTOM PACK MANAGEMENT ====================

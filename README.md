@@ -26,9 +26,10 @@
 - **Tile Deduplication**: Hierarchical areas share common tiles to save storage space
 - **Resume Capability**: Automatically resume interrupted downloads
 
-### 🎨 **Advanced 4-Tab Interface**
-- **🌍 World Hierarchy**: Navigate the global map structure with breadcrumb navigation
-- **� Custom Packs**: Manage and download polygon-based custom areas
+### 🎨 **Advanced 5-Tab Interface**
+- **🌐 Dynamic Explorer**: Real-time API-driven location discovery and hierarchical navigation
+- **💾 Offline Tiles**: Comprehensive tile management with storage analytics and cleanup tools
+- **📍 Custom Packs**: Manage and download polygon-based custom areas with multi-layer support
 - **✏️ Draw Area**: Interactive map polygon drawing with configuration options
 - **⬇️ Downloads**: Monitor all active downloads with detailed progress metrics
 
@@ -37,6 +38,15 @@
 - **Offline Routing**: Mathematical route calculation when internet isn't available
 - **Global Search**: Find any location worldwide with smart ranking and GPS coordinate support
 - **Recent Locations**: Quick access clipboard with persistent storage
+
+### 💾 **Comprehensive Offline Tile Management**
+- **Storage Analytics**: Real-time statistics showing total tiles, storage usage, and organization
+- **Layer-based Management**: View and delete tiles by specific map layers (OSM, satellite, terrain)
+- **Pack Association Tracking**: See which tiles belong to which map packs with detailed metadata
+- **Orphaned Tile Cleanup**: Identify and remove unassociated tiles from deleted packs
+- **Re-download Functionality**: Update existing packs when settings change with smart validation
+- **Multi-layer Pack Support**: Configure packs with multiple tile layers and offline routing options
+- **Granular Deletion**: Remove tiles by layer, pack, or cleanup all orphaned tiles with confirmation dialogs
 
 ## 🚀 Quick Start
 

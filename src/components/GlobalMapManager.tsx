@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import CopyMapPackModal from './CopyMapPackModal';
+import { getAvailableLayers } from '../config/mapLayers';
 import { Map as LeafletMap } from 'leaflet';
 import { 
   globalMapPackSystem, 
@@ -53,17 +54,29 @@ const GlobalMapManager: React.FC<Props> = ({
   editingPolygonId = null
 }) => {
   // State management
-  const [activeTab, setActiveTab] = useState<'hierarchy' | 'dynamic' | 'custom' | 'downloads' | 'polygon'>('dynamic');
+  const [activeTab, setActiveTab] = useState<'offline' | 'dynamic' | 'custom' | 'downloads' | 'polygon'>('dynamic');
   const [navigationState, setNavigationState] = useState<NavigationState | null>(null);
   const [customPacks, setCustomPacks] = useState<CustomMapPack[]>([]);
   const [downloads, setDownloads] = useState<Map<string, DownloadProgress>>(new Map());
+  
+  // Offline tile management state
+  const [tileStats, setTileStats] = useState<{
+    totalTiles: number;
+    totalSizeMB: number;
+    tilesByLayer: { [layerId: string]: { count: number; sizeMB: number } };
+    tilesByPack: { [packId: string]: { count: number; sizeMB: number; packName: string } };
+    unassociatedTiles: { count: number; sizeMB: number };
+  } | null>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
   
   // Custom pack creation form
   const [customPackForm, setCustomPackForm] = useState({
     name: '',
     description: '',
     zoomLevels: [10, 11, 12, 13, 14, 15, 16, 17, 18],
-    layerIds: ['openstreetmap']
+    layerIds: ['openstreetmap'],
+    enableOfflineRouting: false,
+    routingEngine: 'brouter' as 'brouter' | 'internal'
   });
 
   // Custom pack editing
@@ -204,13 +217,20 @@ const GlobalMapManager: React.FC<Props> = ({
       return;
     }
 
+    if (customPackForm.layerIds.length === 0) {
+      alert('Please select at least one tile layer');
+      return;
+    }
+
     try {
       const packId = await globalMapPackSystem.createCustomPack(
         customPackForm.name,
         customPackForm.description,
         polygonPoints,
         customPackForm.zoomLevels,
-        customPackForm.layerIds
+        customPackForm.layerIds,
+        customPackForm.enableOfflineRouting,
+        customPackForm.routingEngine
       );
 
       console.log(`✅ Created custom pack: ${packId}`);
@@ -220,7 +240,9 @@ const GlobalMapManager: React.FC<Props> = ({
         name: '',
         description: '',
         zoomLevels: [10, 11, 12, 13, 14, 15, 16, 17, 18],
-        layerIds: ['openstreetmap']
+        layerIds: ['openstreetmap'],
+        enableOfflineRouting: false,
+        routingEngine: 'brouter' as 'brouter' | 'internal'
       });
       clearPolygon();
       setActiveTab('custom');
@@ -237,13 +259,25 @@ const GlobalMapManager: React.FC<Props> = ({
       name: pack.name,
       description: pack.description,
       zoomLevels: pack.zoomLevels,
-      layerIds: pack.layerIds
+      layerIds: pack.layerIds,
+      enableOfflineRouting: pack.enableOfflineRouting || false,
+      routingEngine: pack.routingEngine || 'brouter'
     });
     setShowEditModal(true);
   };
 
   const handleSaveCustomPack = async () => {
     if (!editingPack) return;
+
+    if (!customPackForm.name.trim()) {
+      alert('Please enter a name for the custom pack');
+      return;
+    }
+
+    if (customPackForm.layerIds.length === 0) {
+      alert('Please select at least one tile layer');
+      return;
+    }
     
     try {
       // Update the custom pack
@@ -251,7 +285,9 @@ const GlobalMapManager: React.FC<Props> = ({
         name: customPackForm.name,
         description: customPackForm.description,
         zoomLevels: customPackForm.zoomLevels,
-        layerIds: customPackForm.layerIds
+        layerIds: customPackForm.layerIds,
+        enableOfflineRouting: customPackForm.enableOfflineRouting,
+        routingEngine: customPackForm.routingEngine
       });
       
       setShowEditModal(false);
@@ -262,7 +298,9 @@ const GlobalMapManager: React.FC<Props> = ({
         name: '',
         description: '',
         zoomLevels: [10, 11, 12, 13, 14, 15, 16, 17, 18],
-        layerIds: ['openstreetmap']
+        layerIds: ['openstreetmap'],
+        enableOfflineRouting: false,
+        routingEngine: 'brouter' as 'brouter' | 'internal'
       });
       
       console.log(`✅ Updated custom pack: ${editingPack.name}`);
@@ -341,12 +379,30 @@ const GlobalMapManager: React.FC<Props> = ({
     }
   };
 
-  const handleDownloadCustomPack = async (packId: string) => {
+  const handleDownloadCustomPack = async (packId: string, forceRedownload: boolean = false) => {
     try {
-      await globalMapPackSystem.downloadCustomPack(packId);
+      await globalMapPackSystem.downloadCustomPack(packId, forceRedownload);
     } catch (error) {
       console.error('Custom pack download failed:', error);
       alert('Custom pack download failed. Please try again.');
+    }
+  };
+
+  const handleRedownloadCustomPack = async (packId: string) => {
+    const pack = customPacks.find(p => p.id === packId);
+    if (!pack) return;
+    
+    const confirm = window.confirm(
+      `Re-download "${pack.name}"?\n\n` +
+      `This will download the latest tiles based on current settings:\n` +
+      `- Layers: ${pack.layerIds.join(', ')}\n` +
+      `- Zoom levels: ${pack.zoomLevels[0]}-${pack.zoomLevels[pack.zoomLevels.length - 1]}\n` +
+      `- Estimated tiles: ${pack.estimatedTiles.toLocaleString()}\n\n` +
+      `Existing tiles for this pack will be updated.`
+    );
+    
+    if (confirm) {
+      await handleDownloadCustomPack(packId, true);
     }
   };
 
@@ -388,6 +444,92 @@ const GlobalMapManager: React.FC<Props> = ({
   alert(`Download failed: ${msg}`);
     }
   };
+
+  // ==================== OFFLINE TILE MANAGEMENT ====================
+  const loadTileStatistics = async () => {
+    try {
+      setLoadingStats(true);
+      const stats = await globalMapPackSystem.getOfflineTileStatistics();
+      setTileStats(stats);
+    } catch (error) {
+      console.error('Failed to load tile statistics:', error);
+      alert('Failed to load tile statistics. Please try again.');
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  const handleDeleteTilesByLayer = async (layerId: string, layerName: string) => {
+    const confirm = window.confirm(
+      `Delete all offline tiles for "${layerName}" layer?\n\n` +
+      `This will remove ${tileStats?.tilesByLayer[layerId]?.count || 0} tiles ` +
+      `(~${tileStats?.tilesByLayer[layerId]?.sizeMB || 0}MB) from local storage.\n\n` +
+      `This action cannot be undone.`
+    );
+    
+    if (confirm) {
+      try {
+        const deletedCount = await globalMapPackSystem.deleteOfflineTilesByLayer(layerId);
+        alert(`Deleted ${deletedCount} tiles for ${layerName} layer`);
+        await loadTileStatistics(); // Reload stats
+      } catch (error) {
+        console.error('Failed to delete tiles:', error);
+        alert('Failed to delete tiles. Please try again.');
+      }
+    }
+  };
+
+  const handleDeleteTilesByPack = async (packId: string, packName: string) => {
+    const confirm = window.confirm(
+      `Delete all offline tiles for "${packName}" pack?\n\n` +
+      `This will remove ${tileStats?.tilesByPack[packId]?.count || 0} tiles ` +
+      `(~${tileStats?.tilesByPack[packId]?.sizeMB || 0}MB) from local storage.\n\n` +
+      `The pack will be marked as not downloaded and can be re-downloaded later.\n\n` +
+      `This action cannot be undone.`
+    );
+    
+    if (confirm) {
+      try {
+        const deletedCount = await globalMapPackSystem.deleteOfflineTilesByPack(packId);
+        alert(`Deleted ${deletedCount} tiles for ${packName} pack`);
+        await loadTileStatistics(); // Reload stats
+        // Update custom packs to reflect changes
+        const updatedPacks = await globalMapPackSystem.getCustomPacks();
+        setCustomPacks(updatedPacks);
+      } catch (error) {
+        console.error('Failed to delete pack tiles:', error);
+        alert('Failed to delete pack tiles. Please try again.');
+      }
+    }
+  };
+
+  const handleDeleteUnassociatedTiles = async () => {
+    const confirm = window.confirm(
+      `Delete all unassociated offline tiles?\n\n` +
+      `This will remove ${tileStats?.unassociatedTiles.count || 0} tiles ` +
+      `(~${tileStats?.unassociatedTiles.sizeMB || 0}MB) that are not part of any map pack.\n\n` +
+      `These may be tiles from deleted packs or experimental downloads.\n\n` +
+      `This action cannot be undone.`
+    );
+    
+    if (confirm) {
+      try {
+        const deletedCount = await globalMapPackSystem.deleteUnassociatedTiles();
+        alert(`Deleted ${deletedCount} unassociated tiles`);
+        await loadTileStatistics(); // Reload stats
+      } catch (error) {
+        console.error('Failed to delete unassociated tiles:', error);
+        alert('Failed to delete unassociated tiles. Please try again.');
+      }
+    }
+  };
+
+  // Load tile statistics when offline tab is activated
+  useEffect(() => {
+    if (activeTab === 'offline' && !tileStats && !loadingStats) {
+      loadTileStatistics();
+    }
+  }, [activeTab, tileStats, loadingStats]);
 
   // ==================== EXPORT/IMPORT ====================
   const handleExportMapPacks = async () => {
@@ -971,6 +1113,18 @@ const GlobalMapManager: React.FC<Props> = ({
               <span>{editingPolygonId === expectedPolygonId ? '🛑' : '🔧'}</span>
               <span>{editingPolygonId === expectedPolygonId ? 'Stop Edit' : 'Edit Shape'}</span>
             </button>
+
+            {/* Re-download button for downloaded packs */}
+            {pack.isDownloaded && !isDownloading && (
+              <button
+                onClick={() => handleRedownloadCustomPack(pack.id)}
+                className="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 flex items-center space-x-1"
+                title={`Re-download ${pack.name} with current settings`}
+              >
+                <span>🔄</span>
+                <span>Re-download</span>
+              </button>
+            )}
             
             {/* Copy button */}
             <button
@@ -1050,7 +1204,7 @@ const GlobalMapManager: React.FC<Props> = ({
         <div className="flex border-b border-gray-200">
           {[
             { id: 'dynamic', label: '🌐 Dynamic Explorer', icon: '🔄' },
-            { id: 'hierarchy', label: '🌍 Static Hierarchy', icon: '🗺️' },
+            { id: 'offline', label: '💾 Offline Tiles', icon: '🗄️' },
             { id: 'custom', label: 'Custom Packs', icon: '📍' },
             { id: 'polygon', label: 'Draw Area', icon: '✏️' },
             { id: 'downloads', label: 'Downloads', icon: '⬇️' }
@@ -1091,86 +1245,140 @@ const GlobalMapManager: React.FC<Props> = ({
             </div>
           )}
 
-          {/* Static Hierarchy Tab */}
-          {activeTab === 'hierarchy' && (
+          {/* Offline Tile Management Tab */}
+          {activeTab === 'offline' && (
             <div className="h-full overflow-y-auto p-4">
-              {renderLevelSelector()}
-              {renderSearchBox()}
-              {renderBreadcrumbs()}
-              
-              <div className="space-y-4">
-                {navigationState?.isSearching ? (
-                  <div>
-                    <h3 className="font-semibold text-lg mb-3">
-                      Search Results ({navigationState.searchResults.length})
-                    </h3>
-                    {navigationState.searchResults.length === 0 ? (
-                      <p className="text-gray-500">No results found</p>
-                    ) : (
-                      navigationState.searchResults.slice(0, 20).map(result => {
-                        const node = globalMapPackSystem.getGlobalNodes().find(n => n.id === result.id);
-                        return node ? renderNodeCard(node) : null;
-                      })
-                    )}
-                  </div>
-                ) : (
-                  <div>
-                    {/* Current Level Header with Download Option */}
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-semibold text-lg">
-                        {navigationState?.breadcrumbs.length ? 
-                          navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1].name : 
-                          'World'
-                        } ({navigationState?.children.length || 0})
-                      </h3>
-                      
-                      {/* Download Current Level Button */}
-                      {navigationState && (
-                        <div className="flex items-center space-x-2">
-                          {navigationState.currentLevel !== 'section' && (
-                            <button
-                              onClick={() => handleDownloadCurrentLevel()}
-                              className="px-4 py-2 bg-purple-500 text-white rounded text-sm hover:bg-purple-600 flex items-center space-x-2"
-                            >
-                              <span>⬇️</span>
-                              <span>Download {navigationState.currentLevel === 'world' ? 'Everything' : 
-                                           navigationState.currentLevel === 'continent' ? 'Continent' :
-                                           navigationState.currentLevel === 'country' ? 'Country' :
-                                           navigationState.currentLevel === 'state' ? 'State/Region' :
-                                           'Level'}</span>
-                            </button>
-                          )}
-                          
-                          {(navigationState.currentLevel === 'country' || navigationState.currentLevel === 'state') && (
-                            <button
-                              onClick={() => handleLoadMoreCities()}
-                              className="px-3 py-2 bg-blue-500 text-white rounded text-sm hover:bg-blue-600"
-                            >
-                              + Load Cities
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    
-                    {navigationState?.children.length === 0 ? (
-                      <div className="text-center py-8">
-                        <p className="text-gray-500 mb-4">No child locations available at this level</p>
-                        {(navigationState.currentLevel === 'state' || navigationState.currentLevel === 'city') && (
-                          <button
-                            onClick={() => handleLoadMoreCities()}
-                            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                          >
-                            🏙️ Load Cities for {navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1]?.name || 'this area'}
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      navigationState?.children.map(renderNodeCard)
-                    )}
-                  </div>
-                )}
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-lg">💾 Offline Tile Management</h3>
+                <button
+                  onClick={loadTileStatistics}
+                  disabled={loadingStats}
+                  className="px-3 py-2 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 disabled:bg-gray-400 flex items-center space-x-1"
+                >
+                  <span>🔄</span>
+                  <span>{loadingStats ? 'Loading...' : 'Refresh'}</span>
+                </button>
               </div>
+
+              {loadingStats && (
+                <div className="text-center py-8">
+                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                  <p className="mt-2 text-gray-600">Loading tile statistics...</p>
+                </div>
+              )}
+
+              {!loadingStats && !tileStats && (
+                <div className="text-center py-8 text-gray-500">
+                  <p>Click "Refresh" to load offline tile statistics</p>
+                </div>
+              )}
+
+              {tileStats && (
+                <div className="space-y-6">
+                  {/* Overview Statistics */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h4 className="font-semibold text-md mb-3 text-blue-800">📊 Storage Overview</h4>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="font-medium">Total Tiles:</span>
+                        <span className="ml-2 text-blue-700 font-mono">{tileStats.totalTiles.toLocaleString()}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium">Total Size:</span>
+                        <span className="ml-2 text-blue-700 font-mono">{tileStats.totalSizeMB.toFixed(2)} MB</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tiles by Layer */}
+                  {Object.keys(tileStats.tilesByLayer).length > 0 && (
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                      <h4 className="font-semibold text-md mb-3 text-green-800">🗺️ Tiles by Layer</h4>
+                      <div className="space-y-2">
+                        {Object.entries(tileStats.tilesByLayer).map(([layerId, stats]) => (
+                          <div key={layerId} className="flex items-center justify-between bg-white rounded p-3 border border-green-200">
+                            <div className="flex-1">
+                              <span className="font-medium text-green-800">{layerId}</span>
+                              <div className="text-sm text-green-600">
+                                {stats.count.toLocaleString()} tiles • {stats.sizeMB.toFixed(2)} MB
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteTilesByLayer(layerId, layerId)}
+                              className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600 flex items-center space-x-1"
+                              title={`Delete all ${layerId} tiles`}
+                            >
+                              <span>🗑️</span>
+                              <span>Delete</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tiles by Pack */}
+                  {Object.keys(tileStats.tilesByPack).length > 0 && (
+                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                      <h4 className="font-semibold text-md mb-3 text-purple-800">📍 Tiles by Map Pack</h4>
+                      <div className="space-y-2">
+                        {Object.entries(tileStats.tilesByPack).map(([packId, stats]) => (
+                          <div key={packId} className="flex items-center justify-between bg-white rounded p-3 border border-purple-200">
+                            <div className="flex-1">
+                              <span className="font-medium text-purple-800">{stats.packName}</span>
+                              <div className="text-sm text-purple-600">
+                                {stats.count.toLocaleString()} tiles • {stats.sizeMB.toFixed(2)} MB
+                              </div>
+                              <div className="text-xs text-gray-500">Pack ID: {packId}</div>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteTilesByPack(packId, stats.packName)}
+                              className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600 flex items-center space-x-1"
+                              title={`Delete all tiles for ${stats.packName}`}
+                            >
+                              <span>🗑️</span>
+                              <span>Delete</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Unassociated Tiles */}
+                  {tileStats.unassociatedTiles.count > 0 && (
+                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                      <h4 className="font-semibold text-md mb-3 text-orange-800">⚠️ Unassociated Tiles</h4>
+                      <div className="flex items-center justify-between bg-white rounded p-3 border border-orange-200">
+                        <div className="flex-1">
+                          <span className="font-medium text-orange-800">Orphaned Tiles</span>
+                          <div className="text-sm text-orange-600">
+                            {tileStats.unassociatedTiles.count.toLocaleString()} tiles • {tileStats.unassociatedTiles.sizeMB.toFixed(2)} MB
+                          </div>
+                          <div className="text-xs text-gray-500">These tiles are not part of any current map pack</div>
+                        </div>
+                        <button
+                          onClick={handleDeleteUnassociatedTiles}
+                          className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600 flex items-center space-x-1"
+                          title="Delete all unassociated tiles"
+                        >
+                          <span>🗑️</span>
+                          <span>Clean Up</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Empty State */}
+                  {tileStats.totalTiles === 0 && (
+                    <div className="text-center py-8 text-gray-500">
+                      <div className="text-6xl mb-4">🗂️</div>
+                      <h4 className="text-lg font-medium mb-2">No Offline Tiles</h4>
+                      <p>Download some map packs to see offline tile statistics here.</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1364,6 +1572,82 @@ const GlobalMapManager: React.FC<Props> = ({
                         Levels {Math.min(...customPackForm.zoomLevels)}-{Math.max(...customPackForm.zoomLevels)} 
                         ({customPackForm.zoomLevels.length} levels)
                       </p>
+                    </div>
+
+                    {/* Tile Layer Selection */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Tile Layers
+                      </label>
+                      <div className="space-y-2 max-h-32 overflow-y-auto border border-gray-200 rounded p-2">
+                        {getAvailableLayers().map(layer => (
+                          <label key={layer.id} className="flex items-center space-x-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={customPackForm.layerIds.includes(layer.id)}
+                              onChange={(e) => {
+                                const { checked } = e.target;
+                                setCustomPackForm(prev => ({
+                                  ...prev,
+                                  layerIds: checked
+                                    ? [...prev.layerIds, layer.id]
+                                    : prev.layerIds.filter(id => id !== layer.id)
+                                }));
+                              }}
+                              className="rounded"
+                            />
+                            <span>{layer.name}</span>
+                            <span className="text-xs text-gray-500">({layer.id})</span>
+                          </label>
+                        ))}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Selected: {customPackForm.layerIds.length} layer{customPackForm.layerIds.length !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+
+                    {/* Offline Routing Options */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Offline Routing
+                      </label>
+                      <div className="space-y-3">
+                        <label className="flex items-center space-x-2">
+                          <input
+                            type="checkbox"
+                            checked={customPackForm.enableOfflineRouting}
+                            onChange={(e) => setCustomPackForm(prev => ({ 
+                              ...prev, 
+                              enableOfflineRouting: e.target.checked 
+                            }))}
+                            className="rounded"
+                          />
+                          <span className="text-sm">Enable offline route finding</span>
+                        </label>
+                        
+                        {customPackForm.enableOfflineRouting && (
+                          <div className="ml-6 space-y-2">
+                            <label className="block text-sm font-medium text-gray-700">
+                              Routing Engine
+                            </label>
+                            <select
+                              value={customPackForm.routingEngine}
+                              onChange={(e) => setCustomPackForm(prev => ({ 
+                                ...prev, 
+                                routingEngine: e.target.value as 'brouter' | 'internal' 
+                              }))}
+                              className="border border-gray-300 rounded px-2 py-1 text-sm w-full"
+                            >
+                              <option value="brouter">BRouter (High Quality)</option>
+                              <option value="internal">Internal (Basic)</option>
+                            </select>
+                            <p className="text-xs text-gray-500">
+                              BRouter provides more accurate routing for cycling/hiking. 
+                              Internal routing uses basic straight-line calculations.
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     
                     <button
@@ -1704,6 +1988,82 @@ const GlobalMapManager: React.FC<Props> = ({
                     Levels {Math.min(...customPackForm.zoomLevels)}-{Math.max(...customPackForm.zoomLevels)} 
                     ({customPackForm.zoomLevels.length} levels)
                   </p>
+                </div>
+
+                {/* Tile Layer Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Tile Layers
+                  </label>
+                  <div className="space-y-2 max-h-32 overflow-y-auto border border-gray-200 rounded p-2">
+                    {getAvailableLayers().map(layer => (
+                      <label key={layer.id} className="flex items-center space-x-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={customPackForm.layerIds.includes(layer.id)}
+                          onChange={(e) => {
+                            const { checked } = e.target;
+                            setCustomPackForm(prev => ({
+                              ...prev,
+                              layerIds: checked
+                                ? [...prev.layerIds, layer.id]
+                                : prev.layerIds.filter(id => id !== layer.id)
+                            }));
+                          }}
+                          className="rounded"
+                        />
+                        <span>{layer.name}</span>
+                        <span className="text-xs text-gray-500">({layer.id})</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Selected: {customPackForm.layerIds.length} layer{customPackForm.layerIds.length !== 1 ? 's' : ''}
+                  </p>
+                </div>
+
+                {/* Offline Routing Options */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Offline Routing
+                  </label>
+                  <div className="space-y-3">
+                    <label className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={customPackForm.enableOfflineRouting}
+                        onChange={(e) => setCustomPackForm(prev => ({ 
+                          ...prev, 
+                          enableOfflineRouting: e.target.checked 
+                        }))}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Enable offline route finding</span>
+                    </label>
+                    
+                    {customPackForm.enableOfflineRouting && (
+                      <div className="ml-6 space-y-2">
+                        <label className="block text-sm font-medium text-gray-700">
+                          Routing Engine
+                        </label>
+                        <select
+                          value={customPackForm.routingEngine}
+                          onChange={(e) => setCustomPackForm(prev => ({ 
+                            ...prev, 
+                            routingEngine: e.target.value as 'brouter' | 'internal' 
+                          }))}
+                          className="border border-gray-300 rounded px-2 py-1 text-sm w-full"
+                        >
+                          <option value="brouter">BRouter (High Quality)</option>
+                          <option value="internal">Internal (Basic)</option>
+                        </select>
+                        <p className="text-xs text-gray-500">
+                          BRouter provides more accurate routing for cycling/hiking. 
+                          Internal routing uses basic straight-line calculations.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 
                 <div className="bg-gray-100 rounded p-3 text-sm">

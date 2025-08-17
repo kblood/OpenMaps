@@ -60,9 +60,10 @@ Two complementary systems work together:
 
 2. **Global Map Pack System** (`GlobalMapManager.tsx`)
    - Pre-defined map pack downloads
-   - 4-tab interface: World Hierarchy, Custom Packs, Draw Area, Downloads
+   - 5-tab interface: Dynamic Explorer, Offline Tiles, Custom Packs, Draw Area, Downloads
    - Advanced polygon drawing and editing for custom areas
    - Parallel tile downloading (20x speed improvement)
+   - Comprehensive offline tile management and storage analytics
 
 ### Polygon Editing System
 Revolutionary polygon editing system for precise map pack boundary management:
@@ -116,6 +117,61 @@ Advanced multi-layer support with flexible configuration options:
 - 📊 **Size Estimation**: Real-time calculation of download size and tile count
 - ⚠️ **Size Warnings**: Alerts for large downloads (>500MB)
 
+### Offline Tile Management System
+Revolutionary offline storage management with comprehensive analytics and cleanup tools:
+
+**Key Features**:
+- **Real-time Storage Analytics**: Live statistics showing total tiles, storage usage, and organization
+- **Layer-based Organization**: View and manage tiles by map layer (OSM, satellite, terrain)
+- **Pack Association Tracking**: See which tiles belong to which map packs
+- **Orphaned Tile Detection**: Identify and clean up unassociated tiles from deleted packs
+- **Granular Deletion**: Remove tiles by layer, pack, or cleanup all orphaned tiles
+- **Re-download Capabilities**: Update existing packs when settings change
+
+**Key Components**:
+- **Offline Tiles Tab**: Replaces static hierarchy with dynamic tile management interface
+- **Storage Overview**: Total tiles and MB usage with real-time refresh
+- **Tiles by Layer Section**: Green-coded interface showing tiles organized by map layer
+- **Tiles by Pack Section**: Purple-coded interface linking tiles to their originating packs
+- **Unassociated Tiles Section**: Orange-coded warning for orphaned tiles needing cleanup
+
+**User Interface Elements**:
+- 💾 **Offline Tiles Tab**: New dedicated tab for comprehensive tile management
+- 📊 **Storage Overview**: Real-time statistics with tile count and storage size
+- 🗺️ **Layer Management**: View and delete tiles by specific map layers
+- 📍 **Pack Association**: See which packs own which tiles with pack metadata
+- ⚠️ **Orphaned Cleanup**: Identify and remove tiles not belonging to any current pack
+- 🔄 **Re-download Button**: Update downloaded packs with current settings
+- 🗑️ **Selective Deletion**: Granular control over tile cleanup with confirmation dialogs
+
+**Technical Implementation**:
+- **Geographic Validation**: Tiles are associated with packs through boundary checking
+- **Layer/Zoom Verification**: Ensures tiles match pack configuration requirements
+- **Size Estimation**: Accurate storage calculations using 20KB average per tile
+- **Legacy Migration**: Automatic upgrade of old packs missing layer/routing properties
+- **Confirmation Safety**: All destructive operations require detailed confirmation dialogs
+
+### Enhanced Custom Pack Features
+Advanced map pack configuration with comprehensive layer and routing options:
+
+**Layer Selection Interface**:
+- **Multi-layer Support**: Select multiple tile layers (OSM, satellite, terrain) per pack
+- **Visual Layer Picker**: Checkbox interface with layer names and IDs
+- **Real-time Validation**: Prevents creating packs without selected layers
+- **Layer Count Display**: Shows selected layer count in pack details
+
+**Offline Routing Configuration**:
+- **Routing Toggle**: Enable/disable offline route finding per pack
+- **Engine Selection**: Choose between BRouter (high quality) and Internal (basic) routing
+- **Conditional UI**: Routing options appear only when enabled
+- **Pack-specific Settings**: Each pack can have different routing configurations
+
+**Re-download Functionality**:
+- **Settings-aware Updates**: Re-download packs when layer/zoom/routing settings change
+- **Confirmation Workflow**: Shows current pack settings before re-downloading
+- **Status Management**: Automatically updates pack download status
+- **Progressive Enhancement**: Existing packs continue working while new features are available
+
 ### Frontend Architecture
 ```
 src/
@@ -146,6 +202,7 @@ backend/src/
 ├── routes/
 │   ├── geocoding.ts                   # Nominatim proxy with caching
 │   ├── routing.ts                     # OSRM/Valhalla routing proxy
+│   ├── tiles.ts                       # Tile proxy service for CORS resolution
 │   └── places.ts                      # Places search and POI data
 ├── services/
 │   └── cache.ts                       # Redis caching layer
@@ -217,6 +274,29 @@ When modifying the multi-layer features:
 - Check that copy modal shows current pack details accurately
 - Verify large download warnings appear for >500MB estimates
 - Test that copied packs maintain polygon geometry while allowing layer/zoom changes
+
+### Working with Offline Tile Management System
+When modifying the offline tile management features:
+- Test tile statistics loading with `loadTileStatistics()` function
+- Verify tile-to-pack association logic works correctly with `isTileInPack()`
+- Test deletion functionality with different tile scenarios (layer-specific, pack-specific, orphaned)
+- Ensure confirmation dialogs show accurate impact information before deletion
+- Test re-download functionality updates pack settings correctly
+- Verify legacy pack migration works for packs missing layer/routing properties
+- Check that storage calculations are accurate (20KB average per tile)
+- Test empty state handling when no tiles are downloaded
+- Verify real-time statistics refresh after tile operations
+
+### Working with Enhanced Custom Pack Features
+When modifying the enhanced custom pack features:
+- Test layer selection UI with multiple layers selected/deselected
+- Verify validation prevents creating packs with zero layers
+- Test offline routing toggle and engine selection
+- Ensure re-download button appears only for downloaded packs
+- Check that pack settings are preserved during editing
+- Test form validation for required fields (name, layers)
+- Verify layer count display updates correctly in pack details
+- Test that routing settings are saved and loaded properly
 
 ### API Integration
 - The system uses multiple APIs: Overpass, Nominatim, REST Countries, OSRM, Valhalla
@@ -311,6 +391,23 @@ GRAPHHOPPER_BASE_URL=https://graphhopper.com/api/1/route
 - **Copy modal not opening**: Verify `showCopyModal` state and `copyingPack` are set correctly
 - **Large download warnings missing**: Check estimation calculation logic in `CopyMapPackModal`
 - **Layer display incorrect**: Verify `pack.layerIds` array is properly populated and displayed
+
+### Offline Tile Management Issues
+- **Statistics not loading**: Check `getOfflineTileStatistics()` method and IndexedDB access permissions
+- **Tile deletion not working**: Verify `deleteOfflineTilesByLayer()` or `deleteOfflineTilesByPack()` methods in browser console
+- **Pack association incorrect**: Check `isTileInPack()` logic for geographic bounds and layer/zoom validation
+- **Re-download button missing**: Ensure pack `isDownloaded` property is true and no active downloads
+- **Storage calculations wrong**: Verify 20KB average tile size estimation in statistics calculation
+- **Orphaned tiles not detected**: Check that pack boundary validation correctly identifies unassociated tiles
+- **Confirmation dialogs missing info**: Verify statistics are loaded before showing deletion confirmations
+
+### Enhanced Custom Pack Issues
+- **Layer selection not working**: Check `getAvailableLayers()` returns proper layer list from map pack system
+- **No layers validation failing**: Verify `customPackForm.layerIds.length === 0` validation in create/edit functions
+- **Routing options not saving**: Check `enableOfflineRouting` and `routingEngine` properties in pack interface
+- **Re-download not updating settings**: Verify `forceRedownload=true` parameter is passed to `downloadCustomPack()`
+- **Legacy packs missing properties**: Check migration logic in `loadCustomPacks()` adds missing layer/routing properties
+- **Form validation not preventing submission**: Ensure validation runs before `createCustomPack()` calls
 
 ### Development Environment
 - Node.js 18+ required for optimal performance
