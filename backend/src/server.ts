@@ -7,8 +7,10 @@ import dotenv from 'dotenv';
 
 import geocodingRoutes from './routes/geocoding';
 import routingRoutes from './routes/routing';
+import offlineRoutingRoutes from './routes/offlineRouting';
 import placesRoutes from './routes/places';
 import adminRoutes from './routes/admin';
+import tilesRoutes from './routes/tiles';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './middleware/logger';
 
@@ -87,8 +89,10 @@ app.get('/healthplus', async (req, res) => {
 // API routes
 app.use('/api/geocoding', geocodingRoutes);
 app.use('/api/routing', routingRoutes);
+app.use('/api/offline-routing', offlineRoutingRoutes);
 app.use('/api/places', placesRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/tiles', tilesRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

@@ -1,6 +1,43 @@
 import { Location, Route } from '../types';
 import { RouteMode, RoutePreference, RouteOptions } from '../components/Routing/RoutePanel';
 
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+
+// BRouter integration interfaces
+export interface BRouterRoute {
+  success: boolean;
+  route?: Route;
+  error?: string;
+  metadata?: {
+    provider: string;
+    profile: string;
+    offline: boolean;
+    distance: number;
+    duration: number;
+    coordinates_count: number;
+  };
+}
+
+export interface RoutingProfile {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface RoutingDataSegment {
+  id: string;
+  filename: string;
+  bounds: {
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+  };
+  url: string;
+  size: number;
+  downloaded: boolean;
+}
+
 interface OfflineRouteStep {
   distance: number;
   duration: number;
@@ -48,6 +85,285 @@ const getDirection = (bearing: number): string => {
   return directions[index];
 };
 
+// Generate realistic waypoints that simulate following roads
+const generateRealisticWaypoints = (start: Location, end: Location, mode: RouteMode): [number, number][] => {
+  const waypoints: [number, number][] = [];
+  
+  // Always start with the start point
+  waypoints.push([start.lng, start.lat]);
+  
+  const totalDistance = calculateDistance(start.lat, start.lng, end.lat, end.lng);
+  
+  // For short distances (< 1km), use direct route with minimal waypoints
+  if (totalDistance < 1000) {
+    // Add one intermediate point with slight deviation to simulate road following
+    const midLat = (start.lat + end.lat) / 2;
+    const midLng = (start.lng + end.lng) / 2;
+    
+    // Add small random deviation to simulate road curves (max 50m)
+    const deviation = 0.0005; // ~50m
+    const randomDeviation = (Math.random() - 0.5) * deviation;
+    
+    waypoints.push([midLng + randomDeviation, midLat + randomDeviation]);
+    waypoints.push([end.lng, end.lat]);
+    return waypoints;
+  }
+  
+  // For longer distances, create more waypoints to simulate realistic road paths
+  const numWaypoints = Math.min(Math.floor(totalDistance / 2000), 8); // One waypoint per 2km, max 8
+  
+  for (let i = 1; i <= numWaypoints; i++) {
+    const ratio = i / (numWaypoints + 1);
+    
+    // Interpolate between start and end
+    let lat = start.lat + (end.lat - start.lat) * ratio;
+    let lng = start.lng + (end.lng - start.lng) * ratio;
+    
+    // Add realistic deviations based on transport mode
+    const baseDeviation = getRealisticDeviation(mode, totalDistance);
+    
+    // Add some randomness to simulate road network
+    const angle = Math.random() * Math.PI * 2;
+    const distance = baseDeviation * (0.5 + Math.random() * 0.5); // 50-100% of base deviation
+    
+    lat += Math.cos(angle) * distance;
+    lng += Math.sin(angle) * distance * Math.cos(lat * Math.PI / 180); // Adjust for latitude
+    
+    waypoints.push([lng, lat]);
+  }
+  
+  // Always end with the end point
+  waypoints.push([end.lng, end.lat]);
+  
+  return waypoints;
+};
+
+// Get realistic deviation amount based on transport mode and distance
+const getRealisticDeviation = (mode: RouteMode, distance: number): number => {
+  // Base deviation in degrees (approximately)
+  const baseDeviations = {
+    driving: 0.002, // ~200m - highways can be quite direct
+    walking: 0.001, // ~100m - pedestrian paths more direct
+    running: 0.001, // ~100m - similar to walking
+    cycling: 0.0015, // ~150m - bike paths have moderate deviation
+    hiking: 0.003, // ~300m - hiking trails can deviate significantly
+    mountain_biking: 0.004, // ~400m - mountain bike trails very winding
+    racing_bike: 0.001 // ~100m - racing bikes prefer direct routes
+  };
+  
+  const baseDeviation = baseDeviations[mode] || baseDeviations.driving;
+  
+  // Scale deviation based on distance - longer routes have more potential for deviation
+  const distanceScale = Math.min(distance / 10000, 2); // Scale up to 2x for routes > 10km
+  
+  return baseDeviation * distanceScale;
+};
+
+// BRouter Service Integration
+class BRouterIntegration {
+  private isInitialized = false;
+  private availableProfiles: RoutingProfile[] = [];
+
+  async initialize(): Promise<void> {
+    if (this.isInitialized) return;
+
+    try {
+      console.log('🧭 Initializing BRouter integration...');
+      
+      const status = await this.getServiceStatus();
+      console.log('🔍 BRouter service status check result:', status);
+      if (!status.success || status.status !== 'running') {
+        console.warn('⚠️ BRouter service is not running, fallback to mathematical routing. Status:', status);
+        return;
+      }
+
+      this.availableProfiles = await this.getProfiles();
+      this.isInitialized = true;
+      console.log(`✅ BRouter integration initialized with ${this.availableProfiles.length} profiles`);
+      
+    } catch (error) {
+      console.error('❌ Failed to initialize BRouter:', error);
+    }
+  }
+
+  async calculateRoute(start: Location, end: Location, profile = 'car-fast'): Promise<BRouterRoute> {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/offline-routing/route`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          startLat: start.lat,
+          startLng: start.lng,
+          endLat: end.lat,
+          endLng: end.lng,
+          profile,
+          format: 'geojson'
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || 'Failed to calculate BRouter route'
+        };
+      }
+
+      // Transform BRouter response to Route format
+      const route: Route = {
+        geometry: data.route.geometry,
+        legs: [{
+          distance: data.route.properties.distance,
+          duration: data.route.properties.time,
+          steps: this.generateStepsFromCoordinates(data.route.geometry.coordinates, data.route.properties)
+        }],
+        service: 'brouter',
+        profile: profile,
+        summary: {
+          distance: data.route.properties.distance,
+          duration: data.route.properties.time,
+          profile: profile,
+          service: 'brouter',
+          waypoints: [start, end]
+        }
+      };
+
+      return {
+        success: true,
+        route,
+        metadata: data.metadata
+      };
+
+    } catch (error) {
+      console.error('BRouter calculation error:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown routing error'
+      };
+    }
+  }
+
+  private generateStepsFromCoordinates(coordinates: [number, number][], properties: any): OfflineRouteStep[] {
+    const steps: OfflineRouteStep[] = [];
+    
+    if (coordinates.length === 0) return steps;
+
+    // Start step
+    steps.push({
+      distance: 0,
+      duration: 0,
+      instruction: 'Head out on your route',
+      maneuver: {
+        type: 'depart',
+        modifier: 'straight',
+        location: coordinates[0]
+      }
+    });
+
+    // Generate intermediate steps
+    const segmentDistance = properties.distance / Math.max(1, coordinates.length - 1);
+    const segmentDuration = properties.time / Math.max(1, coordinates.length - 1);
+
+    for (let i = 1; i < coordinates.length - 1; i++) {
+      const [lng1, lat1] = coordinates[i - 1];
+      const [lng2, lat2] = coordinates[i];
+      const bearing = calculateBearing(lat1, lng1, lat2, lng2);
+      const direction = getDirection(bearing);
+
+      steps.push({
+        distance: segmentDistance,
+        duration: segmentDuration,
+        instruction: `Continue ${direction}`,
+        maneuver: {
+          type: 'continue',
+          modifier: 'straight',
+          location: coordinates[i]
+        }
+      });
+    }
+
+    // End step
+    steps.push({
+      distance: 0,
+      duration: 0,
+      instruction: 'You have arrived at your destination',
+      maneuver: {
+        type: 'arrive',
+        modifier: 'straight',
+        location: coordinates[coordinates.length - 1]
+      }
+    });
+
+    return steps;
+  }
+
+  async getProfiles(): Promise<RoutingProfile[]> {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/offline-routing/profiles`);
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        return data.profiles;
+      } else {
+        return this.getDefaultProfiles();
+      }
+    } catch (error) {
+      return this.getDefaultProfiles();
+    }
+  }
+
+  private getDefaultProfiles(): RoutingProfile[] {
+    return [
+      { id: 'car-fast', name: 'Car (Fast)', description: 'Fast car routing with highways' },
+      { id: 'bicycle', name: 'Bicycle', description: 'Bicycle-friendly routes' },
+      { id: 'foot', name: 'Walking', description: 'Pedestrian routes' }
+    ];
+  }
+
+  async getServiceStatus(): Promise<any> {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/offline-routing/status`);
+      return await response.json();
+    } catch (error) {
+      return { success: false, status: 'stopped' };
+    }
+  }
+
+  isAvailable(): boolean {
+    return this.isInitialized;
+  }
+
+  getAvailableProfiles(): RoutingProfile[] {
+    return this.availableProfiles;
+  }
+}
+
+// Singleton BRouter integration
+const brouterIntegration = new BRouterIntegration();
+
+// Initialize on module load
+brouterIntegration.initialize().catch(error => {
+  console.error('Failed to initialize BRouter integration:', error);
+});
+
+// Map RouteMode to BRouter profiles
+const mapRouteModeToProfile = (mode: RouteMode): string => {
+  const profileMap: { [key in RouteMode]: string } = {
+    driving: 'car-fast',
+    walking: 'foot',
+    running: 'foot',
+    cycling: 'bicycle',
+    hiking: 'foot',
+    mountain_biking: 'mtb',
+    racing_bike: 'bicycle'
+  };
+  
+  return profileMap[mode] || 'car-fast';
+};
+
 // Get speed based on route mode (km/h)
 const getSpeed = (mode: RouteMode): number => {
   const speeds = {
@@ -62,28 +378,6 @@ const getSpeed = (mode: RouteMode): number => {
   return speeds[mode] || 5;
 };
 
-// Generate intermediate waypoints for smoother routing
-const generateWaypoints = (start: Location, end: Location, segments: number = 3): Location[] => {
-  const waypoints: Location[] = [start];
-  
-  for (let i = 1; i < segments; i++) {
-    const ratio = i / segments;
-    const lat = start.lat + (end.lat - start.lat) * ratio;
-    const lng = start.lng + (end.lng - start.lng) * ratio;
-    waypoints.push({ lat, lng });
-  }
-  
-  waypoints.push(end);
-  return waypoints;
-};
-
-// Create geometry from waypoints
-const createGeometry = (waypoints: Location[]): any => {
-  return {
-    type: 'LineString',
-    coordinates: waypoints.map(point => [point.lng, point.lat])
-  };
-};
 
 // Apply route preferences and options
 const applyRouteModifications = (distance: number, duration: number, mode: RouteMode, preference: RoutePreference, options: RouteOptions): { distance: number, duration: number } => {
@@ -129,20 +423,45 @@ const applyRouteModifications = (distance: number, duration: number, mode: Route
   return { distance: modifiedDistance, duration: modifiedDuration };
 };
 
-export const getOfflineRoute = (
+export const getOfflineRoute = async (
   start: Location, 
   end: Location, 
   mode: RouteMode = 'driving',
   preference: RoutePreference = 'fastest',
   options: RouteOptions = { avoidHighways: false, avoidTolls: false, avoidFerries: false }
-): Route => {
+): Promise<Route> => {
   console.log('getOfflineRoute called with:', { start, end, mode, preference, options });
+  
+  // Try BRouter first if available
+  console.log('🔍 Checking if BRouter is available:', brouterIntegration.isAvailable());
+  if (brouterIntegration.isAvailable()) {
+    try {
+      const brouterProfile = mapRouteModeToProfile(mode);
+      console.log(`🧭 Attempting BRouter routing with profile: ${brouterProfile}`);
+      
+      const brouterResult = await brouterIntegration.calculateRoute(start, end, brouterProfile);
+      
+      if (brouterResult.success && brouterResult.route) {
+        console.log('✅ BRouter routing successful');
+        return brouterResult.route;
+      } else {
+        console.warn('⚠️ BRouter routing failed, fallback to mathematical routing:', brouterResult.error);
+      }
+    } catch (error) {
+      console.warn('⚠️ BRouter routing error, fallback to mathematical routing:', error);
+    }
+  }
+  
+  console.log('📐 Using improved mathematical fallback routing');
   
   // Calculate direct distance and bearing
   const directDistance = calculateDistance(start.lat, start.lng, end.lat, end.lng);
   console.log('Direct distance calculated:', directDistance);
   const bearing = calculateBearing(start.lat, start.lng, end.lat, end.lng);
   const direction = getDirection(bearing);
+  
+  // Create a more realistic route with waypoints instead of straight line
+  const realisticWaypoints = generateRealisticWaypoints(start, end, mode);
   
   // Get speed and calculate base duration
   const speedKmh = getSpeed(mode);
@@ -182,8 +501,8 @@ export const getOfflineRoute = (
   estimatedDistance = modified.distance;
   estimatedDuration = modified.duration;
   
-  // Generate waypoints for visualization
-  const waypoints = generateWaypoints(start, end, 5);
+  // Convert realistic waypoints to Location objects for route steps
+  const waypoints: Location[] = realisticWaypoints.map(([lng, lat]) => ({ lat, lng }));
   
   // Create route steps
   const steps: OfflineRouteStep[] = [];
@@ -231,9 +550,12 @@ export const getOfflineRoute = (
     }
   });
   
-  // Create the route object
+  // Create the route object with realistic waypoints
   const route: Route = {
-    geometry: createGeometry(waypoints),
+    geometry: {
+      type: 'LineString',
+      coordinates: realisticWaypoints
+    } as any,
     legs: [{
       distance: estimatedDistance,
       duration: estimatedDuration,
@@ -253,19 +575,19 @@ export const getOfflineRoute = (
   return route;
 };
 
-export const getOfflineRouteAlternatives = (
+export const getOfflineRouteAlternatives = async (
   start: Location, 
   end: Location, 
   mode: RouteMode = 'driving',
   options: RouteOptions = { avoidHighways: false, avoidTolls: false, avoidFerries: false }
-): Route[] => {
+): Promise<Route[]> => {
   const alternatives: Route[] = [];
   
   // Generate 2-3 alternative routes with different characteristics
   const preferences: RoutePreference[] = ['fastest', 'shortest', 'balanced'];
   
-  preferences.forEach((preference, index) => {
-    const route = getOfflineRoute(start, end, mode, preference, options);
+  for (const [index, preference] of preferences.entries()) {
+    const route = await getOfflineRoute(start, end, mode, preference, options);
     
     // Modify each alternative slightly to make them distinct
     const variation = 1 + (index * 0.1); // 10% variation per alternative
@@ -282,7 +604,7 @@ export const getOfflineRouteAlternatives = (
     }
     
     alternatives.push(route);
-  });
+  }
   
   return alternatives;
 };
@@ -316,9 +638,9 @@ export const formatOfflineDuration = (seconds: number): string => {
 };
 
 // Emergency/Safety routing for remote areas
-export const getEmergencyRoute = (start: Location, end: Location): Route => {
+export const getEmergencyRoute = async (start: Location, end: Location): Promise<Route> => {
   // Always use walking mode for emergency situations
-  const route = getOfflineRoute(start, end, 'walking', 'shortest', {
+  const route = await getOfflineRoute(start, end, 'walking', 'shortest', {
     avoidHighways: true,
     avoidTolls: false,
     avoidFerries: true
@@ -331,4 +653,77 @@ export const getEmergencyRoute = (start: Location, end: Location): Route => {
   }
   
   return route;
+};
+
+// BRouter specific exports for advanced functionality
+export const getBRouterProfiles = (): RoutingProfile[] => {
+  return brouterIntegration.getAvailableProfiles();
+};
+
+export const isBRouterAvailable = (): boolean => {
+  return brouterIntegration.isAvailable();
+};
+
+export const getBRouterServiceStatus = async (): Promise<any> => {
+  return await brouterIntegration.getServiceStatus();
+};
+
+export const getRequiredRoutingData = async (bounds: { north: number; south: number; east: number; west: number }): Promise<RoutingDataSegment[]> => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/offline-routing/routing-data/segments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(bounds)
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      return data.segments;
+    } else {
+      console.error('Failed to get routing data segments:', data.error);
+      return [];
+    }
+  } catch (error) {
+    console.error('Error getting routing data segments:', error);
+    return [];
+  }
+};
+
+export const downloadRoutingData = async (segments: RoutingDataSegment[]): Promise<boolean> => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/offline-routing/routing-data/download`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ segments })
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      console.log(`📦 Started downloading ${segments.length} routing data segments`);
+      return true;
+    } else {
+      console.error('Failed to start routing data download:', data.error);
+      return false;
+    }
+  } catch (error) {
+    console.error('Error starting routing data download:', error);
+    return false;
+  }
+};
+
+// Enhanced offline routing with BRouter integration
+export const getEnhancedOfflineRoute = async (
+  start: Location, 
+  end: Location, 
+  mode: RouteMode = 'driving',
+  preference: RoutePreference = 'fastest',
+  options: RouteOptions = { avoidHighways: false, avoidTolls: false, avoidFerries: false }
+): Promise<Route> => {
+  return await getOfflineRoute(start, end, mode, preference, options);
 };

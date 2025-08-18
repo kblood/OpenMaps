@@ -1,11 +1,74 @@
 import { Location, Route } from '../types';
 import { RouteMode, RoutePreference, RouteOptions } from '../components/Routing/RoutePanel';
 import { getOfflineRoute, getOfflineRouteAlternatives } from './offlineRouting';
+import { globalMapPackSystem } from './globalMapPackSystem';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
-// Debug flag to force offline routing
-const FORCE_OFFLINE_ROUTING = true;
+// Get offline routing preference from environment or localStorage
+const getOfflineRoutingPreference = (): boolean => {
+  // Check environment variable first
+  const envForceOffline = import.meta.env.VITE_FORCE_OFFLINE_ROUTING === 'true';
+  if (envForceOffline) return true;
+  
+  // Check localStorage setting - default to false (online mode)
+  const storedPreference = localStorage.getItem('openmaps_offline_routing');
+  return storedPreference === 'true';
+};
+
+// Routing mode management
+export const setOfflineRoutingMode = (enabled: boolean): void => {
+  localStorage.setItem('openmaps_offline_routing', enabled.toString());
+  console.log(`🧭 Routing mode changed to: ${enabled ? 'offline' : 'online'}`);
+};
+
+export const isOfflineRoutingEnabled = (): boolean => {
+  return getOfflineRoutingPreference();
+};
+
+// Check if route should use offline routing based on map pack settings
+const shouldUseOfflineRouting = (start: Location, end: Location): boolean => {
+  // First check global offline routing preference
+  if (getOfflineRoutingPreference()) return true;
+  
+  // Check if either start or end point is within a map pack that has offline routing enabled
+  const customPacks = globalMapPackSystem.getCustomPacks();
+  
+  for (const pack of customPacks) {
+    if (pack.enableOfflineRouting && pack.isDownloaded) {
+      // Check if start point is within this pack
+      if (isLocationInPack(start, pack) || isLocationInPack(end, pack)) {
+        console.log(`🧭 Using offline routing because route is within pack: ${pack.name}`);
+        return true;
+      }
+    }
+  }
+  
+  return false;
+};
+
+// Helper function to check if a location is within a map pack's polygon
+const isLocationInPack = (location: Location, pack: any): boolean => {
+  if (!pack.polygon || pack.polygon.length < 3) return false;
+  
+  // Simple point-in-polygon test using ray casting algorithm
+  const x = location.lng;
+  const y = location.lat;
+  let inside = false;
+  
+  for (let i = 0, j = pack.polygon.length - 1; i < pack.polygon.length; j = i++) {
+    const xi = pack.polygon[i][1]; // longitude
+    const yi = pack.polygon[i][0]; // latitude
+    const xj = pack.polygon[j][1]; // longitude  
+    const yj = pack.polygon[j][0]; // latitude
+    
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  
+  return inside;
+};
 
 export const getRoute = async (
   start: Location, 
@@ -16,22 +79,24 @@ export const getRoute = async (
 ): Promise<Route | null> => {
   console.log('getRoute called with:', { start, end, mode, preference, options });
   
-  // Force offline routing for testing
-  if (FORCE_OFFLINE_ROUTING) {
-    console.log('FORCE_OFFLINE_ROUTING is enabled, using offline routing directly');
+  // Check if offline routing should be used (global setting or pack-specific)
+  const useOfflineRouting = shouldUseOfflineRouting(start, end);
+  
+  if (useOfflineRouting) {
+    console.log('🔌 Offline routing mode enabled, using offline routing directly');
     try {
-      const offlineRoute = getOfflineRoute(start, end, mode, preference, options);
-      console.log('Offline routing successful:', offlineRoute);
+      const offlineRoute = await getOfflineRoute(start, end, mode, preference, options);
+      console.log('✅ Offline routing successful:', offlineRoute);
       return offlineRoute;
     } catch (offlineError) {
-      console.error('Offline routing failed:', offlineError);
+      console.error('❌ Offline routing failed:', offlineError);
       return null;
     }
   }
   
   // First try online routing
   try {
-    console.log('Attempting online routing...');
+    console.log('🌐 Attempting online routing...');
     const params = new URLSearchParams({
       start: `${start.lat},${start.lng}`,
       end: `${end.lat},${end.lng}`,
@@ -42,33 +107,36 @@ export const getRoute = async (
       avoidFerries: options.avoidFerries.toString()
     });
     
-    const response = await fetch(`${API_BASE_URL}/routing/directions?${params}`);
-    console.log('Online routing response status:', response.status);
+    const url = `${API_BASE_URL}/routing/directions?${params}`;
+    console.log('🔗 Routing API URL:', url);
+    
+    const response = await fetch(url);
+    console.log('📡 Online routing response status:', response.status);
     
     if (!response.ok) {
       throw new Error('Routing request failed');
     }
     
     const data = await response.json();
-    console.log('Online routing data:', data);
+    console.log('📊 Online routing data:', data);
     
     if (data.route) {
-      console.log('Online routing successful');
+      console.log('✅ Online routing successful');
       return data.route;
     }
     
     throw new Error('No route data received');
   } catch (error) {
-    console.warn('Online routing failed, falling back to offline routing:', error);
+    console.warn('⚠️ Online routing failed, falling back to offline routing:', error);
     
     // Fallback to offline routing
     try {
-      console.log('Attempting offline routing...');
-      const offlineRoute = getOfflineRoute(start, end, mode, preference, options);
-      console.log('Offline routing successful:', offlineRoute);
+      console.log('🔌 Attempting offline routing fallback...');
+      const offlineRoute = await getOfflineRoute(start, end, mode, preference, options);
+      console.log('✅ Offline routing fallback successful:', offlineRoute);
       return offlineRoute;
     } catch (offlineError) {
-      console.error('Offline routing also failed:', offlineError);
+      console.error('❌ Offline routing also failed:', offlineError);
       return null;
     }
   }
@@ -87,6 +155,21 @@ export const getRouteAlternatives = async (
   mode: RouteMode = 'driving',
   options: RouteOptions = { avoidHighways: false, avoidTolls: false, avoidFerries: false }
 ): Promise<Route[]> => {
+  // Check if offline routing is enabled
+  const useOfflineRouting = getOfflineRoutingPreference();
+  
+  if (useOfflineRouting) {
+    console.log('🔌 Offline routing mode enabled, using offline alternatives');
+    try {
+      const offlineRoutes = await getOfflineRouteAlternatives(start, end, mode, options);
+      console.log('✅ Offline alternative routes successful');
+      return offlineRoutes;
+    } catch (offlineError) {
+      console.error('❌ Offline alternative routes failed:', offlineError);
+      return [];
+    }
+  }
+  
   // First try online routing
   try {
     const params = new URLSearchParams({
@@ -112,7 +195,7 @@ export const getRouteAlternatives = async (
     
     // Fallback to offline routing
     try {
-      const offlineRoutes = getOfflineRouteAlternatives(start, end, mode, options);
+      const offlineRoutes = await getOfflineRouteAlternatives(start, end, mode, options);
       console.log('Using offline alternative routes');
       return offlineRoutes;
     } catch (offlineError) {
