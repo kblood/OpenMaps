@@ -111,7 +111,8 @@ export class BRouterService {
     }
 
     console.log('📦 Downloading BRouter JAR...');
-    const jarUrl = 'https://github.com/abrensch/brouter/releases/download/1.7.8/brouter-1.7.8.jar';
+    // Using Maven Central for reliable BRouter JAR download
+    const jarUrl = 'https://repo1.maven.org/maven2/de/dkfz/odcf/brouter/1.6.1/brouter-1.6.1.jar';
     
     try {
       await this.downloadFile(jarUrl, this.config.jarPath);
