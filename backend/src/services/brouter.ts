@@ -110,14 +110,60 @@ export class BRouterService {
       }
     }
 
-    console.log('📦 Downloading BRouter JAR...');
-    const jarUrl = 'https://github.com/abrensch/brouter/releases/download/1.7.8/brouter-1.7.8.jar';
+    console.log('📦 Downloading BRouter...');
+    
+    // BRouter releases are now ZIP files containing the JAR
+    const zipUrl = 'https://github.com/abrensch/brouter/releases/download/v1.7.8/brouter-1.7.8.zip';
+    const zipPath = path.join(path.dirname(this.config.jarPath), 'brouter-1.7.8.zip');
     
     try {
-      await this.downloadFile(jarUrl, this.config.jarPath);
-      console.log('✅ BRouter JAR downloaded');
+      await this.downloadFile(zipUrl, zipPath);
+      console.log('📦 Downloaded BRouter ZIP, extracting...');
+      
+      // Extract JAR from ZIP using built-in unzip
+      const { execSync } = await import('child_process');
+      const extractDir = path.dirname(this.config.jarPath);
+      
+      try {
+        // Try PowerShell extraction (Windows)
+        execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`, { stdio: 'pipe' });
+      } catch {
+        // Fallback: Try unzip (Linux/Mac)
+        try {
+          execSync(`unzip -o "${zipPath}" -d "${extractDir}"`, { stdio: 'pipe' });
+        } catch {
+          console.log('⚠️ Could not extract ZIP file - unzip/PowerShell not available');
+          throw new Error('ZIP extraction failed');
+        }
+      }
+      
+      // Find the JAR file in extracted contents
+      const extractedDir = path.join(extractDir, 'brouter-1.7.8');
+      const jarFile = path.join(extractedDir, 'brouter.jar');
+      
+      if (existsSync(jarFile)) {
+        // Move JAR to expected location
+        await fs.rename(jarFile, this.config.jarPath);
+        console.log('✅ BRouter JAR extracted and installed');
+      } else {
+        // Look for any JAR file
+        const files = await fs.readdir(extractedDir);
+        const jarFiles = files.filter(f => f.endsWith('.jar'));
+        if (jarFiles.length > 0) {
+          await fs.rename(path.join(extractedDir, jarFiles[0]), this.config.jarPath);
+          console.log('✅ BRouter JAR extracted and installed');
+        } else {
+          throw new Error('No JAR file found in ZIP');
+        }
+      }
+      
+      // Cleanup ZIP file
+      try {
+        await fs.unlink(zipPath);
+      } catch { /* ignore cleanup errors */ }
+      
     } catch (error) {
-      console.error('❌ Failed to download BRouter JAR:', error);
+      console.error('❌ Failed to download BRouter:', error);
       console.log('⚠️ BRouter will not be available, routing will fall back to mathematical calculation');
       // Don't throw error, let the service continue without BRouter
     }

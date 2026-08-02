@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, X, MapPin, Navigation, Eye, Copy } from 'lucide-react';
+import { Search, X, MapPin, Navigation, Eye, Copy, Plus } from 'lucide-react';
 import { SearchResult } from '../../types';
 import { geocodeSearch } from '../../services/geocoding';
 import { clsx } from 'clsx';
@@ -12,6 +12,7 @@ interface SearchBarProps {
   showMapOptions?: boolean;
   clipboard?: Array<{ location: { lat: number; lng: number }; name: string; timestamp: Date }>;
   onClipboardSelect?: (item: { location: { lat: number; lng: number }; name: string }) => void;
+  onCreateMapPack?: (result: SearchResult) => void;
 }
 
 const SearchBar: React.FC<SearchBarProps> = ({
@@ -21,7 +22,8 @@ const SearchBar: React.FC<SearchBarProps> = ({
   onMapCenter,
   showMapOptions = false,
   clipboard = [],
-  onClipboardSelect
+  onClipboardSelect,
+  onCreateMapPack
 }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -250,6 +252,18 @@ const SearchBar: React.FC<SearchBarProps> = ({
                         >
                           <Navigation className="h-3 w-3" />
                         </button>
+                        {onCreateMapPack && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onCreateMapPack(result);
+                            }}
+                            className="p-1 text-purple-600 hover:bg-purple-100 rounded"
+                            title="Create map pack for this area"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

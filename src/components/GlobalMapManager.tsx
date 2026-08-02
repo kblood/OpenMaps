@@ -1,18 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import CopyMapPackModal from './CopyMapPackModal';
+import RegionalPackManager from './RegionalPackManager';
 import { getAvailableLayers } from '../config/mapLayers';
 import { Map as LeafletMap } from 'leaflet';
 import { 
   globalMapPackSystem, 
-  NavigationState, 
   CustomMapPack, 
   DownloadProgress 
 } from '../services/globalMapPackSystem';
-import { 
-  GlobalMapNode, 
-  SearchableLocation, 
-  HIERARCHY_LEVELS 
-} from '../data/globalMapHierarchy';
 import DynamicLocationExplorer from './DynamicLocationExplorer';
 import type { DynamicLocationNode } from '../services/dynamicLocationService';
 
@@ -54,8 +49,7 @@ const GlobalMapManager: React.FC<Props> = ({
   editingPolygonId = null
 }) => {
   // State management
-  const [activeTab, setActiveTab] = useState<'offline' | 'dynamic' | 'custom' | 'downloads' | 'polygon'>('dynamic');
-  const [navigationState, setNavigationState] = useState<NavigationState | null>(null);
+  const [activeTab, setActiveTab] = useState<'offline' | 'dynamic' | 'custom' | 'downloads' | 'polygon' | 'regional'>('dynamic');
   const [customPacks, setCustomPacks] = useState<CustomMapPack[]>([]);
   const [downloads, setDownloads] = useState<Map<string, DownloadProgress>>(new Map());
   
@@ -87,7 +81,6 @@ const GlobalMapManager: React.FC<Props> = ({
   const [availableLayers, setAvailableLayers] = useState<{id: string; name: string}[]>([]);
 
   // Search state
-  const [searchInput, setSearchInput] = useState('');
   // (removed unused selectedLevelFilter state)
 
   // Refs
@@ -124,14 +117,12 @@ const GlobalMapManager: React.FC<Props> = ({
         await globalMapPackSystem.initialize();
         
         // Subscribe to updates
-        unsubscribeNav = globalMapPackSystem.onNavigationChange(setNavigationState);
         unsubscribeCustom = globalMapPackSystem.onCustomPacksChange(setCustomPacks);
         unsubscribeDownload = globalMapPackSystem.onDownloadProgress((progress) => {
           setDownloads(prev => new Map(prev.set(progress.nodeId, progress)));
         });
 
         // Load initial state
-        setNavigationState(globalMapPackSystem.getNavigationState());
         setCustomPacks(globalMapPackSystem.getCustomPacks());
       } catch (error) {
         console.error('Failed to initialize Global Map Manager:', error);
@@ -335,49 +326,11 @@ const GlobalMapManager: React.FC<Props> = ({
   };
 
   // ==================== NAVIGATION ====================
-  const handleNodeNavigation = (nodeId: string) => {
-    globalMapPackSystem.navigateToNode(nodeId);
-  };
 
   // (removed unused handleLevelNavigation)
 
-  const handleSearch = (query: string) => {
-    setSearchInput(query);
-    if (query.trim()) {
-      globalMapPackSystem.searchGlobal(query);
-    } else {
-      globalMapPackSystem.clearSearch();
-    }
-  };
-
-  const handleSearchResultClick = (result: SearchableLocation) => {
-    globalMapPackSystem.navigateToNode(result.id);
-    setSearchInput('');
-  };
 
   // ==================== DOWNLOADS ====================
-  const handleDownloadNode = async (nodeId: string) => {
-    try {
-      // First validate the download
-      const validation = globalMapPackSystem.validateDownloadLimits(nodeId, 1, 15);
-      
-      if (!validation.valid) {
-        alert(validation.warning);
-        return;
-      }
-      
-      if (validation.warning) {
-        const proceed = confirm(validation.warning);
-        if (!proceed) return;
-      }
-
-      await globalMapPackSystem.downloadNode(nodeId);
-    } catch (error) {
-      console.error('Download failed:', error);
-  const msg = (error as any)?.message || String(error);
-  alert(`Download failed: ${msg}`);
-    }
-  };
 
   const handleDownloadCustomPack = async (packId: string, forceRedownload: boolean = false) => {
     try {
@@ -620,138 +573,10 @@ const GlobalMapManager: React.FC<Props> = ({
     }
   };
 
-  const handleDownloadCurrentLevel = async () => {
-    if (!navigationState) return;
-    
-    try {
-      const levelName = navigationState.currentLevel === 'world' ? 'World' : 
-                       navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1]?.name || navigationState.currentLevel;
-      
-      // Show zoom level selection dialog
-      const zoomSelection = await showZoomLevelDialog(levelName, navigationState.currentLevel);
-      if (!zoomSelection) return; // User cancelled
-      
-  const { minZoom, maxZoom } = zoomSelection;
-      
-      const nodeId = navigationState.currentLevel === 'world' ? 'world' : navigationState.currentNodeId;
-      
-      // Validate download first
-      const validation = globalMapPackSystem.validateDownloadLimits(nodeId, minZoom, maxZoom);
-      
-      if (!validation.valid) {
-        alert(validation.warning);
-        return;
-      }
-      
-      let confirmMessage = `📥 Download ${levelName}?\n\n` +
-        `Zoom levels: ${minZoom} - ${maxZoom}\n` +
-        `Estimated size: ~${validation.estimatedSizeMB}MB\n` +
-        `Estimated tiles: ${validation.estimatedTiles.toLocaleString()}\n\n`;
-      
-      if (validation.warning) {
-        confirmMessage += `⚠️ ${validation.warning}\n\n`;
-      }
-      
-      confirmMessage += `This will download ${navigationState.currentLevel === 'world' ? 'the entire world map' : 
-                                `all sub-regions and detailed maps for ${levelName}`}.\n\nContinue?`;
-      
-      const confirmDownload = confirm(confirmMessage);
-      
-      if (confirmDownload) {
-        await globalMapPackSystem.downloadNode(nodeId, ['openstreetmap'], minZoom, maxZoom);
-      }
-    } catch (error) {
-      console.error('Level download failed:', error);
-      alert('Download failed. Please try again.');
-    }
-  };
 
-  const showZoomLevelDialog = (levelName: string, level: string): Promise<{minZoom: number, maxZoom: number, estimatedSize: number} | null> => {
-    return new Promise((resolve) => {
-      const suggestions = {
-        world: { min: 1, max: 8, size: 0.5 },
-        continent: { min: 4, max: 12, size: 2 },
-        country: { min: 6, max: 14, size: 1.5 },
-        state: { min: 8, max: 16, size: 0.8 },
-        city: { min: 10, max: 18, size: 0.3 }
-      };
-      
-      const suggestion = suggestions[level as keyof typeof suggestions] || suggestions.country;
-      
-      const userInput = prompt(
-        `🎯 Download Options for ${levelName}\n\n` +
-        `Choose zoom levels (1-18):\n\n` +
-        `Recommended for ${level}:\n` +
-        `• Min zoom: ${suggestion.min} (overview level)\n` +
-        `• Max zoom: ${suggestion.max} (detail level)\n` +
-        `• Estimated size: ~${suggestion.size}GB\n\n` +
-        `Format: "min,max" (e.g., "${suggestion.min},${suggestion.max}")\n` +
-        `Or press Cancel to abort\n\n` +
-        `Enter zoom range:`
-      );
-      
-      if (!userInput) {
-        resolve(null);
-        return;
-      }
-      
-      const parts = userInput.split(',').map(s => parseInt(s.trim()));
-      if (parts.length !== 2 || parts.some(isNaN) || parts[0] < 1 || parts[1] > 18 || parts[0] > parts[1]) {
-        alert('Invalid format. Please use "min,max" format with valid zoom levels (1-18).');
-        resolve(null);
-        return;
-      }
-      
-      const [minZoom, maxZoom] = parts;
-      const estimatedSize = calculateEstimatedSize(level, minZoom, maxZoom);
-      
-      resolve({ minZoom, maxZoom, estimatedSize });
-    });
-  };
 
-  const calculateEstimatedTiles = (level: string, minZoom: number, maxZoom: number): number => {
-    const baseMultipliers = {
-      world: 100000,
-      continent: 20000,
-      country: 10000,
-      state: 5000,
-      city: 2000
-    };
-    
-    const multiplier = baseMultipliers[level as keyof typeof baseMultipliers] || 5000;
-    const zoomRange = maxZoom - minZoom + 1;
-    return Math.floor(multiplier * Math.pow(2, zoomRange - 3));
-  };
 
-  const calculateEstimatedSize = (level: string, minZoom: number, maxZoom: number): number => {
-    const tiles = calculateEstimatedTiles(level, minZoom, maxZoom);
-    return Math.round((tiles * 15) / 1024 / 1024 * 100) / 100; // ~15KB per tile average
-  };
 
-  const handleLoadMoreCities = async () => {
-    if (!navigationState) return;
-    
-    try {
-      // In a real implementation, this would load additional cities from an API
-      // For now, we'll show a placeholder message
-      alert(
-        `🏙️ Loading More Cities\n\n` +
-        `This feature would load additional cities and metropolitan areas for ${navigationState.breadcrumbs[navigationState.breadcrumbs.length - 1]?.name || 'this region'}.\n\n` +
-        `In the full implementation, this would:\n` +
-        `• Load cities with 100K+ population\n` +
-        `• Include suburban areas and districts\n` +
-        `• Add transportation hubs and landmarks\n\n` +
-        `Currently showing preloaded major cities only.`
-      );
-      
-      // TODO: Implement actual city loading from external API or expanded dataset
-      // await globalMapPackSystem.loadAdditionalCities(navigationState.currentNodeId);
-      
-    } catch (error) {
-      console.error('Failed to load more cities:', error);
-      alert('Failed to load additional cities. Please try again.');
-    }
-  };
 
   const handleDownloadAction = async (nodeId: string, currentStatus: string) => {
     if (currentStatus === 'downloading') {
@@ -788,226 +613,9 @@ const GlobalMapManager: React.FC<Props> = ({
   };
 
   // ==================== RENDER HELPERS ====================
-  const renderBreadcrumbs = () => {
-    if (!navigationState?.breadcrumbs.length) return null;
 
-    return (
-      <div className="flex items-center space-x-2 mb-4 text-sm">
-        {navigationState.breadcrumbs.map((node, index) => (
-          <React.Fragment key={node.id}>
-            <button
-              onClick={() => handleNodeNavigation(node.id)}
-              className="text-blue-600 hover:text-blue-800 hover:underline"
-            >
-              {node.name}
-            </button>
-            {index < navigationState.breadcrumbs.length - 1 && (
-              <span className="text-gray-400">→</span>
-            )}
-          </React.Fragment>
-        ))}
-      </div>
-    );
-  };
 
-  const renderLevelSelector = () => (
-    <div className="mb-6">
-      <div className="flex items-center justify-between mb-3">
-        <h4 className="font-medium">Navigation Level</h4>
-        <div className="text-xs text-gray-500">
-          Current: {navigationState?.currentLevel} • {navigationState?.children.length || 0} items
-        </div>
-      </div>
-      
-      {/* Hierarchy Breadcrumb Style */}
-      <div className="flex items-center space-x-2 mb-3 flex-wrap">
-        <button
-          onClick={() => globalMapPackSystem.navigateToLevel('world')}
-          className={`px-3 py-2 rounded text-sm font-medium ${
-            navigationState?.currentLevel === 'world'
-              ? 'bg-blue-500 text-white'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          🌍 World
-        </button>
-        
-  {navigationState?.breadcrumbs.map((crumb) => (
-          <React.Fragment key={crumb.id}>
-            <span className="text-gray-400">→</span>
-            <button
-              onClick={() => globalMapPackSystem.navigateToNode(crumb.id)}
-              className="px-3 py-2 bg-gray-100 text-gray-700 rounded text-sm hover:bg-gray-200"
-            >
-              {HIERARCHY_LEVELS.find(l => l.id === crumb.level)?.icon} {crumb.name}
-            </button>
-          </React.Fragment>
-        ))}
-      </div>
-      
-      {/* Quick Level Navigation */}
-      <div className="flex flex-wrap gap-2">
-        {HIERARCHY_LEVELS.map(level => {
-          const count = globalMapPackSystem.getGlobalNodes().filter(n => n.level === level.id).length;
-          return (
-            <button
-              key={level.id}
-              onClick={() => globalMapPackSystem.navigateToLevel(level.id)}
-              className={`px-3 py-1 rounded text-sm border flex items-center space-x-1 ${
-                navigationState?.currentLevel === level.id
-                  ? 'bg-blue-500 text-white border-blue-500'
-                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              <span>{level.icon}</span>
-              <span>{level.name}</span>
-              <span className="text-xs opacity-75">({count})</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
 
-  const renderSearchBox = () => (
-    <div className="mb-4">
-      <div className="relative">
-        <input
-          type="text"
-          placeholder="Search locations worldwide..."
-          value={searchInput}
-          onChange={(e) => handleSearch(e.target.value)}
-          className="w-full border border-gray-300 rounded-md px-3 py-2 pr-10 text-sm"
-        />
-        <div className="absolute inset-y-0 right-0 flex items-center pr-3">
-          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </div>
-      </div>
-      
-      {navigationState?.isSearching && navigationState.searchResults.length > 0 && (
-        <div className="mt-2 max-h-60 overflow-y-auto border border-gray-200 rounded-md bg-white shadow-lg z-10 relative">
-          {navigationState.searchResults.map(result => (
-            <button
-              key={result.id}
-              onClick={() => handleSearchResultClick(result)}
-              className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-gray-100 last:border-b-0"
-            >
-              <div className="font-medium text-sm">{result.name}</div>
-              <div className="text-xs text-gray-500">
-                {result.parentPath.join(' → ')} • {result.level}
-                {result.isCapital && <span className="ml-1 text-red-500">★</span>}
-                {result.population && (
-                  <span className="ml-1">• Pop: {(result.population / 1000000).toFixed(1)}M</span>
-                )}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-
-  const renderNodeCard = (node: GlobalMapNode) => {
-    const downloadProgress = downloads.get(node.id);
-    const isDownloading = downloadProgress?.status === 'downloading';
-    
-    return (
-      <div key={node.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-center space-x-2">
-              <h3 className="font-semibold text-lg">
-                {HIERARCHY_LEVELS.find(l => l.id === node.level)?.icon} {node.name}
-              </h3>
-              {node.isCapital && <span className="text-red-500 text-sm">★ Capital</span>}
-              {node.isDownloaded && <span className="text-green-500 text-sm">✓ Downloaded</span>}
-            </div>
-            
-            <p className="text-sm text-gray-600 mt-1">
-              Level: {node.level} • {node.estimatedTiles.toLocaleString()} tiles • ~{node.estimatedSizeMB}MB
-            </p>
-            
-            {node.population && (
-              <p className="text-sm text-gray-500">
-                Population: {(node.population / 1000000).toFixed(1)}M
-              </p>
-            )}
-            
-            {node.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-2">
-                {node.tags.map(tag => (
-                  <span key={tag} className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          
-          <div className="flex flex-col space-y-2 ml-4">
-            {node.children && node.children.length > 0 && (
-              <button
-                onClick={() => handleNodeNavigation(node.id)}
-                className="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600"
-              >
-                Explore ({node.children.length})
-              </button>
-            )}
-            
-            {!node.isDownloaded && (
-              <button
-                onClick={() => {
-                  if (isDownloading || downloadProgress?.status === 'paused') {
-                    handleDownloadAction(node.id, downloadProgress?.status || 'downloading');
-                  } else {
-                    handleDownloadNode(node.id);
-                  }
-                }}
-                className={`px-3 py-1 text-white rounded text-sm ${
-                  isDownloading 
-                    ? 'bg-orange-500 hover:bg-orange-600' 
-                    : downloadProgress?.status === 'paused'
-                    ? 'bg-blue-500 hover:bg-blue-600'
-                    : 'bg-green-500 hover:bg-green-600'
-                }`}
-              >
-                {isDownloading ? '⏸️ Downloading...' : 
-                 downloadProgress?.status === 'paused' ? '▶️ Resume' : 
-                 '⬇️ Download'}
-              </button>
-            )}
-          </div>
-        </div>
-        
-        {downloadProgress && (
-          <div className="mt-3">
-            <div className="flex justify-between text-sm text-gray-600 mb-1">
-              <span>
-                {downloadProgress.current.toLocaleString()} / {downloadProgress.total.toLocaleString()} tiles
-              </span>
-              <span>
-                {Math.round((downloadProgress.current / downloadProgress.total) * 100)}%
-              </span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div 
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${(downloadProgress.current / downloadProgress.total) * 100}%` }}
-              />
-            </div>
-            {downloadProgress.speed > 0 && (
-              <div className="text-xs text-gray-500 mt-1">
-                Speed: {downloadProgress.speed.toFixed(1)} tiles/sec • 
-                ETA: {Math.round(downloadProgress.estimatedTimeRemaining / 60)} min
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   const renderCustomPackCard = (pack: CustomMapPack) => {
     const downloadProgress = downloads.get(pack.id);
@@ -1204,6 +812,7 @@ const GlobalMapManager: React.FC<Props> = ({
         <div className="flex border-b border-gray-200">
           {[
             { id: 'dynamic', label: '🌐 Dynamic Explorer', icon: '🔄' },
+            { id: 'regional', label: '🌍 Regional Packs', icon: '📦' },
             { id: 'offline', label: '💾 Offline Tiles', icon: '🗄️' },
             { id: 'custom', label: 'Custom Packs', icon: '📍' },
             { id: 'polygon', label: 'Draw Area', icon: '✏️' },
@@ -1241,6 +850,25 @@ const GlobalMapManager: React.FC<Props> = ({
                 onLocationSelect={handleDynamicLocationSelect}
                 onDownload={handleDynamicLocationDownload}
                 className="h-full"
+              />
+            </div>
+          )}
+
+          {/* Regional Packs Tab */}
+          {activeTab === 'regional' && (
+            <div className="h-full overflow-y-auto p-4">
+              <h3 className="font-semibold text-lg mb-4">🌍 Regional Map Packs</h3>
+              
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+                <div className="text-sm text-green-800">
+                  <strong>🚀 Single-File Downloads:</strong> Download complete countries as single MBTiles files. 
+                  100x faster than individual tiles and works completely offline!
+                </div>
+              </div>
+
+              <RegionalPackManager 
+                isOpen={true} 
+                onClose={() => setActiveTab('dynamic')} 
               />
             </div>
           )}

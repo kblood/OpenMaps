@@ -82,7 +82,6 @@ export class LoadingCoordinator {
     loadFunction: () => Promise<LocationRegistryNode | null>,
     priority: LoadingPriority = LoadingPriority.USER_INITIATED
   ): Promise<LocationRegistryNode | null> {
-    const loadKey = `location_${locationId}`;
     
     // Convert single location load to array format for consistency
     const arrayLoadFunction = async (): Promise<LocationRegistryNode[]> => {
@@ -137,7 +136,7 @@ export class LoadingCoordinator {
   getActiveLoads(): Array<{parentId: string, accessPaths: string[], priority: string, duration: number}> {
     const now = Date.now();
     
-    return Array.from(this.activeLoads.entries()).map(([key, state]) => ({
+    return Array.from(this.activeLoads.entries()).map(([, state]) => ({
       parentId: state.parentId,
       accessPaths: Array.from(state.accessPaths),
       priority: LoadingPriority[state.priority],
@@ -162,7 +161,7 @@ export class LoadingCoordinator {
   private async performCoordinatedLoad(
     parentId: string, 
     loadFunction: () => Promise<LocationRegistryNode[]>, 
-    startTime: number
+    _startTime: number
   ): Promise<LocationRegistryNode[]> {
     try {
       console.log(`🔄 Starting coordinated load for ${parentId}`);

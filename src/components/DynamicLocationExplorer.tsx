@@ -26,6 +26,7 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
   const [children, setChildren] = useState<DynamicLocationNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState<boolean>(false);
   const [retryCount, setRetryCount] = useState(0);
   const [lastRetryTime, setLastRetryTime] = useState(0);
 
@@ -54,15 +55,16 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
       return;
     }
     
-    setLoading(true);
-    setError(null);
+  setLoading(true);
+  setError(null);
+  if (!forceRefresh) setRefreshFailed(false);
     setLastRetryTime(now);
     
     try {
       console.log(`🔄 Loading children for ${location.name} (${location.level}) via enhanced registry (attempt ${retryCount + 1}/${maxRetries})`);
       
       // Use registry integration for intelligent caching
-      const childNodes = await registryIntegration.getChildren(location.id, accessPath, forceRefresh);
+  const childNodes = await registryIntegration.getChildren(location.id, accessPath, forceRefresh);
       
       if (isLoadedElsewhere) {
         console.log(`⚡ Instant load: ${location.name} data shared from other tree branches`);
@@ -78,19 +80,23 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
       }
       
       setChildren(childNodes);
+      setRefreshFailed(false);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load children';
       console.error(`❌ Failed to load children for ${location.name}:`, err);
       setError(errorMessage);
+      if (forceRefresh && children.length > 0) {
+        // Preserve existing cache, flag the failure for UI
+        setRefreshFailed(true);
+      }
     } finally {
       setLoading(false);
     }
-  }, [location.id, location.hasChildren, children.length, accessPath, isLoadedElsewhere]);
+  }, [location.id, location.hasChildren, location.level, location.name, children.length, accessPath, isLoadedElsewhere, lastRetryTime, retryCount]);
 
   const handleRefreshNode = useCallback(async () => {
     console.log(`🔄 Force refreshing ${location.name}...`);
-    setChildren([]); // Clear current children
-    await loadChildren(true); // Force refresh from API
+    await loadChildren(true); // Force refresh from API; keep old children until success
   }, [loadChildren, location.name]);
 
   useEffect(() => {
@@ -241,6 +247,12 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
         </div>
       )}
 
+      {refreshFailed && !loading && children.length > 0 && (
+        <div className="text-yellow-600 text-xs p-2" style={indentStyle}>
+          ⚠️ Refresh failed. Showing cached data.
+        </div>
+      )}
+
       {isExpanded && children.length > 0 && (
         <div className="children">
           {children
@@ -275,7 +287,7 @@ const LocationTreeNode: React.FC<LocationTreeNodeProps> = ({
             <span>
               🔄 Loading {location.level === 'continent' ? 'countries' : 
                          location.level === 'country' ? 'states/regions' :
-                         location.level === 'state' ? 'municipalities' :
+                         location.level === 'state' ? 'cities' :
                          location.level === 'municipality' ? 'cities/towns' :
                          location.level === 'city' ? 'districts' : 'locations'}...
             </span>

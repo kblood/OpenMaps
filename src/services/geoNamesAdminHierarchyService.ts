@@ -45,8 +45,6 @@ export interface CountryAdminStructure {
 }
 
 export class GeoNamesAdminHierarchyService {
-  private readonly baseUrl = 'http://api.geonames.org';
-  private readonly username = 'demo'; // Users should replace with their own username
   private cache = new Map<string, any>();
   private requestQueue = new Map<string, Promise<any>>();
 
@@ -648,7 +646,7 @@ export class GeoNamesAdminHierarchyService {
     // For demonstration purposes, generate some sample cities within municipalities
     // In a real implementation, this would query GeoNames children API or use a comprehensive database
     
-    const sampleCities: { [key: number]: GeoNamesPlace[] } = {
+    const sampleCities: { [key: number | string]: GeoNamesPlace[] } = {
       // Aalborg Municipality (largest in Nordjylland)
       2624652: [
         {
@@ -738,7 +736,7 @@ export class GeoNamesAdminHierarchyService {
       ],
       
       // Default case for other municipalities - return a representative city
-      'default': [
+      [0]: [
         {
           geonameId: 9999999,
           name: 'City Center',

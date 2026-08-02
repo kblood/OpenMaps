@@ -8,7 +8,6 @@ import MapControls from './components/UI/MapControls';
 import GlobalMapManager from './components/GlobalMapManager';
 import OfflineStatusIndicator from './components/OfflineStatusIndicator';
 import { globalMapPackSystem } from './services/globalMapPackSystem';
-import { offlineTileCache } from './services/offlineTileCache';
 import { MapPackDebugger } from './components/MapPackDebugger';
 import ProperHierarchyDemo from './components/ProperHierarchyDemo';
 import { useGeolocation } from './hooks/useGeolocation';
@@ -630,10 +629,6 @@ function App() {
     }
   }, []);
 
-  const handleStartPolygonEdit = useCallback((polygonId: string) => {
-    console.log(`🎯 Starting to edit polygon: ${polygonId}`);
-    setEditingPolygonId(polygonId);
-  }, []);
 
   const handleStopPolygonEdit = useCallback(() => {
     console.log('🛑 Stopping polygon edit');

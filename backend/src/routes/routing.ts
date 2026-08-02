@@ -164,15 +164,22 @@ router.get('/directions', asyncHandler(async (req: Request, res: Response) => {
     if (routingService === 'osrm' && OSRM_PROFILES[profile as keyof typeof OSRM_PROFILES]) {
       // Use OSRM
       const osrmProfile = OSRM_PROFILES[profile as keyof typeof OSRM_PROFILES];
+      const url = `${OSRM_BASE_URL}/${osrmProfile}/${startLng},${startLat};${endLng},${endLat}`;
+      console.log(`📡 Requesting OSRM: ${url}`);
+
       response = await axios.get(
-        `${OSRM_BASE_URL}/${osrmProfile}/${startLng},${startLat};${endLng},${endLat}`,
+        url,
         {
           params: {
             overview: 'full',
             geometries: 'geojson',
             steps: true,
             annotations: true
-          }
+          },
+          headers: {
+            'User-Agent': 'OpenMaps/1.1.0'
+          },
+          timeout: 10000 // 10s timeout
         }
       );
 
@@ -183,6 +190,8 @@ router.get('/directions', asyncHandler(async (req: Request, res: Response) => {
     } else if (routingService === 'valhalla' && VALHALLA_PROFILES[profile as keyof typeof VALHALLA_PROFILES]) {
       // Use Valhalla for pedestrian routes with better footway support
       const valhallaProfile = VALHALLA_PROFILES[profile as keyof typeof VALHALLA_PROFILES];
+      console.log(`📡 Requesting Valhalla for profile: ${profile} (${valhallaProfile})`);
+
       const requestBody = {
         locations: [
           { lat: startLat, lon: startLng },
@@ -224,7 +233,13 @@ router.get('/directions', asyncHandler(async (req: Request, res: Response) => {
       }
 
       try {
-        response = await axios.post(`${VALHALLA_BASE_URL}/route`, requestBody);
+        response = await axios.post(`${VALHALLA_BASE_URL}/route`, requestBody, {
+          headers: {
+            'User-Agent': 'OpenMaps/1.1.0',
+            'Content-Type': 'application/json'
+          },
+          timeout: 10000
+        });
         
         if (response.data.trip && response.data.trip.legs && response.data.trip.legs.length > 0) {
           const trip = response.data.trip;

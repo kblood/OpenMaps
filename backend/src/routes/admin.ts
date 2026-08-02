@@ -84,17 +84,21 @@ router.get('/cities', async (req: Request, res: Response) => {
   try {
     const relationId = req.query.relationId as string | undefined;
     const bbox = req.query.bbox as string | undefined;
+    const typesParam = (req.query.types as string | undefined)?.toLowerCase();
+    const typeRegex = typesParam && /^([a-z,]+)$/.test(typesParam)
+      ? `^(${typesParam.split(',').map(t => t.trim()).filter(Boolean).join('|')})$`
+      : '^(city|town|village)$'; // include village by default for better coverage
     if (!relationId && !bbox) return res.status(400).json({ error: 'relationId or bbox required' });
 
-    const cacheKey = `cities:${relationId || bbox}`;
+    const cacheKey = `cities:${relationId || bbox}:${typeRegex}`;
     const cached = cacheService.get<any[]>(cacheKey);
     if (cached) return res.json({ cities: cached, cached: true });
 
     let q: string;
     if (relationId) {
-      q = `[out:json][timeout:60]; rel(${relationId})->.r; map_to_area.r->.a; (node(area.a)["place"~"^(city|town)$"]; ); out center tags;`;
+      q = `[out:json][timeout:60]; rel(${relationId})->.r; map_to_area.r->.a; (node(area.a)["place"~"${typeRegex}"]; ); out center tags;`;
     } else {
-      q = `[out:json][timeout:60];(node["place"~"^(city|town)$"](${bbox}););out center tags;`;
+      q = `[out:json][timeout:60];(node["place"~"${typeRegex}"](${bbox}););out center tags;`;
     }
 
     const resp = await fetchOverpass(q);
@@ -111,6 +115,45 @@ router.get('/cities', async (req: Request, res: Response) => {
   } catch (e: any) {
     console.error('admin/cities error', e?.message);
     return res.status(503).json({ error: 'cities unavailable' });
+  }
+});
+
+// GET /api/admin/subregions?relationId=XXXXX&levels=6,7,8
+router.get('/subregions', async (req: Request, res: Response) => {
+  try {
+    const relationId = req.query.relationId as string | undefined;
+    const levelsParam = (req.query.levels as string | undefined) || '6,7,8';
+    if (!relationId) return res.status(400).json({ error: 'relationId required' });
+
+    const levelList = levelsParam.split(',').map(s => s.trim()).filter(Boolean);
+    const levelRegex = `^(${levelList.join('|')})$`;
+
+    const cacheKey = `subregions:${relationId}:${levelRegex}`;
+    const cached = cacheService.get<any[]>(cacheKey);
+    if (cached) return res.json({ regions: cached, cached: true });
+
+    const q = `[out:json][timeout:60]; rel(${relationId})->.r; map_to_area.r->.a; (rel["boundary"="administrative"]["admin_level"~"${levelRegex}"](area.a); ); out tags center bb;`;
+    const resp = await fetchOverpass(q);
+    const elements = (resp.data?.elements || []).filter((el: any) => el.type === 'relation');
+    const regions = elements.map((el: any) => {
+      const adminLevel = el.tags?.admin_level ? parseInt(el.tags.admin_level) : undefined;
+      const name = el.tags?.['official_name:en'] || el.tags?.['name:en'] || el.tags?.name;
+      const isMunicipality = typeof adminLevel === 'number' ? adminLevel >= 7 : false; // treat 7-8 as municipalities
+      return {
+        id: `${isMunicipality ? 'municipality' : 'district'}_${el.id}`,
+        name,
+        adminLevel,
+        osm: { type: 'relation', id: el.id, areaId: 3600000000 + Number(el.id) },
+        bounds: el.bounds ? { south: el.bounds.minlat, west: el.bounds.minlon, north: el.bounds.maxlat, east: el.bounds.maxlon } : undefined,
+        center: el.center ? { lat: el.center.lat, lng: el.center.lon } : undefined
+      };
+    });
+
+    cacheService.set(cacheKey, regions, 7200);
+    return res.json({ regions, cached: false });
+  } catch (e: any) {
+    console.error('admin/subregions error', e?.message);
+    return res.status(503).json({ error: 'subregions unavailable' });
   }
 });
 

@@ -11,6 +11,8 @@ import offlineRoutingRoutes from './routes/offlineRouting';
 import placesRoutes from './routes/places';
 import adminRoutes from './routes/admin';
 import tilesRoutes from './routes/tiles';
+import mbtilesRoutes from './routes/mbtiles';
+import geofabrikRoutes from './routes/geofabrik';
 import { errorHandler } from './middleware/errorHandler';
 import { logger } from './middleware/logger';
 
@@ -19,15 +21,31 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Security middleware
-app.use(helmet());
+// Security middleware with relaxed CSP for images
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      "img-src": ["'self'", "data:", "*"], // Allow images from any origin
+      "cross-origin-resource-policy": "cross-origin"
+    },
+  },
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 app.use(compression());
 
-// Rate limiting
+// Rate limiting (exclude health checks and offline routing)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  max: 1000, // Increased limit for development
+  message: 'Too many requests from this IP, please try again later.',
+  skip: (req) => {
+    // Skip rate limiting for health checks, offline routing, and geofabrik endpoints
+    return req.path.includes('/health') || 
+           req.path.includes('/mbtiles/health') ||
+           req.path.includes('/geofabrik/') ||
+           req.path.includes('/offline-routing/');
+  }
 });
 
 app.use(limiter);
@@ -36,7 +54,9 @@ app.use(limiter);
 // Allow common dev ports
 const allowedOrigins = new Set([
   process.env.FRONTEND_URL || 'http://localhost:3000',
-  'http://localhost:3001'
+  'http://localhost:3001',
+  'http://localhost:5173',
+  'http://localhost:5174'
 ]);
 app.use(cors({
   origin: (origin, callback) => {
@@ -93,6 +113,8 @@ app.use('/api/offline-routing', offlineRoutingRoutes);
 app.use('/api/places', placesRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/tiles', tilesRoutes);
+app.use('/api/mbtiles', mbtilesRoutes);
+app.use('/api/geofabrik', geofabrikRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

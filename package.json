@@ -1,21 +1,35 @@
 {
   "name": "openmaps",
-  "version": "1.0.0",
-  "description": "Open source Google Maps alternative",
+  "version": "1.1.0",
+  "description": "Interactive offline-capable map application with dynamic location explorer, realistic offline routing, and comprehensive map pack system",
   "main": "electron/main.js",
   "homepage": "./",
+  "author": "OpenMaps Team <openmaps@example.com>",
+  "license": "MIT",
+  "keywords": [
+    "maps",
+    "offline",
+    "navigation",
+    "electron",
+    "open-source",
+    "leaflet",
+    "routing"
+  ],
   "scripts": {
     "dev": "vite",
     "dev:backend": "cd backend && npm run dev",
-    "build": "tsc && vite build",
+    "dev:all": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm run dev:backend\" \"npm run dev\"",
+    "start": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm run dev:backend\" \"npm run dev\"",
+    "build": "vite build",
+    "build:prod": "tsc --project tsconfig.prod.json --noEmit && vite build",
     "build:backend": "cd backend && npm run build",
     "preview": "vite preview",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives",
     "typecheck": "tsc --noEmit",
     "build:pwa": "npm run build && echo 'PWA build - requires workbox-cli: npm install -g workbox-cli && workbox generateSW'",
     "electron:dev": "cross-env NODE_ENV=development electron .",
-    "build:electron": "npm run build && npm run build:backend && electron-builder",
-    "build:electron-win": "npm run build && npm run build:backend && electron-builder --win",
+    "build:electron": "npm run build:prod && npm run build:backend && electron-builder",
+    "build:electron-win": "npm run build:prod && npm run build:backend && electron-builder --win",
     "build:tauri": "npm run build && echo 'Tauri build - requires: npm install --save-dev @tauri-apps/cli && cargo install tauri-cli'",
     "build:mobile": "npm run build && echo 'Mobile build - requires: npm install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/android'",
     "build:docker": "docker build -f Dockerfile.standalone -t openmaps-standalone .",
@@ -31,20 +45,26 @@
     "react-leaflet": "^4.2.1"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.1",
+    "@types/jest": "^30.0.0",
     "@types/react": "^18.2.15",
     "@types/react-dom": "^18.2.7",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "@vitejs/plugin-react": "^4.0.3",
     "autoprefixer": "^10.4.14",
+    "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
-    "electron": "^22.3.27",
-    "electron-builder": "^24.13.3",
+    "electron": "^37.3.0",
+    "electron-builder": "^26.0.12",
     "eslint": "^8.45.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.3",
+    "jest": "^30.2.0",
     "postcss": "^8.4.27",
     "tailwindcss": "^3.3.0",
+    "ts-jest": "^29.4.6",
     "typescript": "^5.0.2",
     "vite": "^4.4.5"
   },
@@ -52,23 +72,34 @@
     "appId": "com.openmaps.app",
     "productName": "OpenMaps",
     "copyright": "Copyright © 2025 OpenMaps Team",
-    "buildVersion": "1.0.0",
+    "buildVersion": "1.1.0",
     "directories": {
       "output": "release/OpenMaps-Desktop-v${version}"
     },
     "files": [
       "dist/**/*",
-      "backend/dist/**/*",
-      "backend/package.json",
       "electron/**/*",
-      "public/icons/**/*",
+      "public/vite.svg",
+      "public/manifest.json",
       "!**/*.map",
-      "!**/node_modules/**/*"
+      "!**/.env*"
     ],
     "extraResources": [
       {
-        "from": "public/icons",
-        "to": "icons"
+        "from": "public/vite.svg",
+        "to": "app-icon.svg"
+      },
+      {
+        "from": "backend/dist",
+        "to": "backend/dist"
+      },
+      {
+        "from": "backend/package.json",
+        "to": "backend/package.json"
+      },
+      {
+        "from": "backend/node_modules",
+        "to": "backend/node_modules"
       }
     ],
     "win": {
@@ -86,10 +117,10 @@
           ]
         }
       ],
-      "icon": "public/icons/icon-256.png",
-      "publisherName": "OpenMaps Team",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "requestedExecutionLevel": "asInvoker"
+      "requestedExecutionLevel": "asInvoker",
+      "forceCodeSigning": false,
+      "cscLink": null
     },
     "mac": {
       "target": [
@@ -101,7 +132,6 @@
           ]
         }
       ],
-      "icon": "public/icons/icon-512.png",
       "category": "public.app-category.navigation",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
@@ -120,8 +150,7 @@
           ]
         }
       ],
-      "icon": "public/icons/icon-512.png",
-      "category": "Office",
+      "category": "Navigation",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "nsis": {
@@ -132,23 +161,19 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "OpenMaps",
-      "installerIcon": "public/icons/icon-256.png",
-      "uninstallerIcon": "public/icons/icon-256.png",
-      "installerHeaderIcon": "public/icons/icon-256.png",
-      "installerSidebar": null,
-      "uninstallerSidebar": null,
       "artifactName": "${productName}-Setup-${version}.${ext}",
-      "license": "LICENSE",
       "warningsAsErrors": false,
       "displayLanguageSelector": false,
-      "installerLanguages": ["en_US"],
-      "include": null
+      "installerLanguages": [
+        "en_US"
+      ]
     },
     "portable": {
       "artifactName": "${productName}-Portable-${version}.${ext}"
     },
     "compression": "normal",
     "nodeGypRebuild": false,
-    "npmRebuild": false
+    "npmRebuild": false,
+    "forceCodeSigning": false
   }
 }

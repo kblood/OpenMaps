@@ -1,16 +1,15 @@
-import React, { useEffect, useRef } from 'react';
-import { MapContainer, Marker, Popup, useMapEvents, Polyline, Polygon, CircleMarker } from 'react-leaflet';
+import React, { useEffect } from 'react';
+import { MapContainer, Marker, Popup, useMapEvents, Polyline, Polygon, CircleMarker, TileLayer } from 'react-leaflet';
 import { LatLngExpression, Map as LeafletMap } from 'leaflet';
 import { Location, Marker as MarkerType, Route } from '../../types';
 import { getMapLayer } from '../../config/mapLayers';
-import { OfflineTileLayer } from '../../services/offlineTileLayer';
 import PolygonEditor from '../PolygonEditor';
 import 'leaflet/dist/leaflet.css';
 
 // Fix for default markers in react-leaflet
 import L from 'leaflet';
 
-let DefaultIcon = L.divIcon({
+const DefaultIcon = L.divIcon({
   html: `<svg width="25" height="41" viewBox="0 0 25 41" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M12.5 0C5.59644 0 0 5.59644 0 12.5C0 19.4036 12.5 41 12.5 41C12.5 41 25 19.4036 25 12.5C25 5.59644 19.4036 0 12.5 0ZM12.5 17C10.0147 17 8 14.9853 8 12.5C8 10.0147 10.0147 8 12.5 8C14.9853 8 17 10.0147 17 12.5C17 14.9853 14.9853 17 12.5 17Z" fill="#3B82F6"/>
   </svg>`,
@@ -19,7 +18,7 @@ let DefaultIcon = L.divIcon({
   iconAnchor: [12, 41]
 });
 
-let StartIcon = L.divIcon({
+const StartIcon = L.divIcon({
   html: `<svg width="25" height="41" viewBox="0 0 25 41" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M12.5 0C5.59644 0 0 5.59644 0 12.5C0 19.4036 12.5 41 12.5 41C12.5 41 25 19.4036 25 12.5C25 5.59644 19.4036 0 12.5 0ZM12.5 17C10.0147 17 8 14.9853 8 12.5C8 10.0147 10.0147 8 12.5 8C14.9853 8 17 10.0147 17 12.5C17 14.9853 14.9853 17 12.5 17Z" fill="#10B981"/>
   </svg>`,
@@ -28,7 +27,7 @@ let StartIcon = L.divIcon({
   iconAnchor: [12, 41]
 });
 
-let EndIcon = L.divIcon({
+const EndIcon = L.divIcon({
   html: `<svg width="25" height="41" viewBox="0 0 25 41" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M12.5 0C5.59644 0 0 5.59644 0 12.5C0 19.4036 12.5 41 12.5 41C12.5 41 25 19.4036 25 12.5C25 5.59644 19.4036 0 12.5 0ZM12.5 17C10.0147 17 8 14.9853 8 12.5C8 10.0147 10.0147 8 12.5 8C14.9853 8 17 10.0147 17 12.5C17 14.9853 14.9853 17 12.5 17Z" fill="#EF4444"/>
   </svg>`,
@@ -105,41 +104,19 @@ function MapReadyHandler({ onMapReady }: { onMapReady: (map: LeafletMap) => void
 }
 
 function OfflineTileLayerComponent({ currentLayer }: { currentLayer: string }) {
-  const map = useMapEvents({});
-  const tileLayerRef = useRef<OfflineTileLayer | null>(null);
+  // Get layer configuration
+  const tileLayerConfig = getMapLayer(currentLayer);
   
-  useEffect(() => {
-    if (!map) return;
-    
-    // Remove existing tile layer
-    if (tileLayerRef.current) {
-      map.removeLayer(tileLayerRef.current);
-    }
-    
-    // Get layer configuration
-    const tileLayerConfig = getMapLayer(currentLayer);
-    
-    // Create and add offline tile layer
-    const offlineTileLayer = new OfflineTileLayer(tileLayerConfig.url, {
-      attribution: tileLayerConfig.attribution,
-      maxZoom: tileLayerConfig.maxZoom,
-    });
-    
-    offlineTileLayer.addTo(map);
-    tileLayerRef.current = offlineTileLayer;
-    
-    console.log(`🗺️ Added offline tile layer: ${currentLayer}`);
-    
-    // Cleanup function
-    return () => {
-      if (tileLayerRef.current) {
-        map.removeLayer(tileLayerRef.current);
-        tileLayerRef.current = null;
-      }
-    };
-  }, [map, currentLayer]);
+  console.log(`🗺️ TileLayer config:`, tileLayerConfig);
   
-  return null;
+  // Use standard react-leaflet TileLayer for debugging
+  return (
+    <TileLayer
+      url={tileLayerConfig.url}
+      attribution={tileLayerConfig.attribution}
+      maxZoom={tileLayerConfig.maxZoom}
+    />
+  );
 }
 
 function MapCenterHandler({ center, zoom }: { center: Location; zoom: number }) {
@@ -171,7 +148,6 @@ const MapComponent: React.FC<MapProps> = ({
   showPolygonPreview = false,
   isDrawingPolygon = false,
   customPackPolygons = [],
-  selectedCustomPacks = new Set(),
   editingPolygonId = null,
   onPolygonEdit,
   editablePolygons = new Map()

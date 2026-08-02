@@ -331,12 +331,12 @@ const RoutePanel: React.FC<RoutePanelProps> = ({ onRouteCalculated, onClose, onM
         getRoute(start, end, routeMode, routePreference, routeOptions),
         getRouteAlternatives(start, end, routeMode, routeOptions)
       ]);
-      
+
       setRoute(mainRoute);
       setAlternativeRoutes(alternatives.slice(1) || []); // Exclude main route
       setSelectedRouteIndex(0);
       onRouteCalculated(mainRoute);
-      
+
       // Save to history
       if (mainRoute) {
         const currentStartName = startLocationRef.current === start ? startName : 'Unknown';

@@ -35,7 +35,7 @@ export const CORE_MAP_PACK: MapPack = {
     {
       id: 'standard',
       name: 'Standard',
-      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      url: `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/tiles/proxy/v2/osm/{z}/{x}/{y}.png`,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
       type: 'raster'
@@ -43,7 +43,7 @@ export const CORE_MAP_PACK: MapPack = {
     {
       id: 'satellite',
       name: 'Satellite',
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      url: `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/tiles/proxy/satellite/{z}/{x}/{y}.png`,
       attribution: '&copy; <a href="https://www.esri.com/">Esri</a>',
       maxZoom: 19,
       type: 'raster'
@@ -51,7 +51,7 @@ export const CORE_MAP_PACK: MapPack = {
     {
       id: 'terrain',
       name: 'Terrain',
-      url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      url: `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/tiles/proxy/terrain/{z}/{x}/{y}.png`,
       attribution: '&copy; <a href="https://opentopomap.org/">OpenTopoMap</a>',
       maxZoom: 17,
       type: 'raster'
@@ -71,7 +71,7 @@ export const SPECIALTY_MAP_PACKS: MapPack[] = [
       {
         id: 'humanitarian',
         name: 'Humanitarian',
-        url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
+        url: `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/tiles/proxy/humanitarian/{z}/{x}/{y}.png`,
         attribution: '&copy; OpenStreetMap contributors, Tiles style by Humanitarian OpenStreetMap Team',
         maxZoom: 19,
         type: 'raster'
@@ -88,7 +88,7 @@ export const SPECIALTY_MAP_PACKS: MapPack[] = [
       {
         id: 'cycling',
         name: 'Cycling Routes',
-        url: 'https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+        url: `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/tiles/proxy/cycling/{z}/{x}/{y}.png`,
         attribution: '&copy; OpenStreetMap contributors, CyclOSM',
         maxZoom: 19,
         type: 'raster'
@@ -105,7 +105,7 @@ export const SPECIALTY_MAP_PACKS: MapPack[] = [
       {
         id: 'transport',
         name: 'Transport',
-        url: 'https://{s}.tile.memomaps.de/tilegen/{z}/{x}/{y}.png',
+        url: `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/tiles/proxy/transport/{z}/{x}/{y}.png`,
         attribution: '&copy; OpenStreetMap contributors, MemoMaps',
         maxZoom: 18,
         type: 'raster'
@@ -122,7 +122,7 @@ export const SPECIALTY_MAP_PACKS: MapPack[] = [
       {
         id: 'dark',
         name: 'Dark Mode',
-        url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        url: `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/api/tiles/proxy/dark/{z}/{x}/{y}.png`,
         attribution: '&copy; OpenStreetMap contributors, CartoDB',
         maxZoom: 19,
         type: 'raster'

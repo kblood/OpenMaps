@@ -69,21 +69,27 @@ export class OfflineTileLayer extends L.TileLayer {
     }
   }
 
-  // Override the createTile method to check offline storage first
+  // Override the createTile method - tries offline first, then falls back to online
   createTile(coords: L.Coords, done: L.DoneCallback): HTMLElement {
     const tile = document.createElement('img');
-    
-    L.DomEvent.on(tile, 'load', () => {
+
+    tile.onload = () => {
       done(undefined, tile);
-    });
-    
-    L.DomEvent.on(tile, 'error', () => {
+    };
+
+    tile.onerror = () => {
+      console.error(`❌ Failed to load tile: ${coords.z}/${coords.x}/${coords.y}`);
       done(new Error('Tile failed to load'), tile);
+    };
+
+    // Try to load offline tile first
+    this.loadOfflineTile(coords, tile).catch(error => {
+      console.error(`Failed to load offline tile, falling back to online: ${error}`);
+      const url = this.getTileUrl(coords);
+      console.log(`🗺️ Loading tile: ${coords.z}/${coords.x}/${coords.y} from ${url}`);
+      tile.src = url;
     });
 
-    // Try to load from offline storage first
-    this.loadOfflineTile(coords, tile);
-    
     return tile;
   }
 
@@ -155,11 +161,63 @@ export class OfflineTileLayer extends L.TileLayer {
     }
   }
 
+  private async saveTileToOfflineStorage(coords: L.Coords, blob: Blob): Promise<void> {
+    if (!this.db) return;
+
+    try {
+      const layerId = 'openstreetmap';
+      const transaction = this.db.transaction(['tiles'], 'readwrite');
+      const store = transaction.objectStore('tiles');
+
+      const tileData = {
+        x: coords.x,
+        y: coords.y,
+        z: coords.z,
+        layerId: layerId,
+        data: blob,
+        timestamp: Date.now(),
+        lastAccessed: Date.now(),
+        priority: 1
+      };
+
+      store.put(tileData);
+      console.log(`💾 Saved online tile to offline storage: ${coords.z}/${coords.x}/${coords.y}`);
+    } catch (error) {
+      console.error('Failed to save tile to offline storage:', error);
+    }
+  }
+
   private loadOnlineTile(coords: L.Coords, tile: HTMLImageElement): void {
+    // Validate coordinates before making tile request
+    if (isNaN(coords.x) || isNaN(coords.y) || isNaN(coords.z) ||
+        coords.z < 0 || coords.z > 19 || coords.x < 0 || coords.y < 0) {
+      console.warn(`🚫 Invalid tile coordinates: z=${coords.z}, x=${coords.x}, y=${coords.y}`);
+      this.showMissingTilePlaceholder(tile, coords);
+      return;
+    }
+
     if (this.isOnline) {
-      const onlineUrl = this.getTileUrl(coords);
-      tile.src = onlineUrl;
-      console.log(`🌐 Loading online tile: ${coords.z}/${coords.x}/${coords.y}`);
+      const tileUrl = this.getTileUrl(coords);
+
+      // Fetch the tile image to save it
+      fetch(tileUrl)
+        .then(response => {
+           if (!response.ok) throw new Error(`Network response was not ok: ${response.statusText}`);
+           return response.blob();
+        })
+        .then(blob => {
+          const objectUrl = URL.createObjectURL(blob);
+          tile.src = objectUrl;
+          console.log(`🌐 Loading and caching online tile: ${coords.z}/${coords.x}/${coords.y} from ${tileUrl}`);
+
+          // Save to offline storage
+          this.saveTileToOfflineStorage(coords, blob);
+        })
+        .catch(error => {
+          console.error(`Error fetching tile ${tileUrl}:`, error);
+          // Fallback to direct URL if fetch fails (caching won't work but map might still show)
+          tile.src = tileUrl;
+        });
     } else {
       // Show placeholder for missing offline tile
       this.showMissingTilePlaceholder(tile, coords);

@@ -251,8 +251,7 @@ export class GlobalAdminHierarchyService {
   /**
    * Check if we have sufficient coverage for the request
    */
-  private hasSufficientCoverage(boundaries: GlobalAdminBoundary[], config: HierarchyConfig): boolean {
-    const maxLevel = config.maxAdminLevel || 2;
+  private hasSufficientCoverage(boundaries: GlobalAdminBoundary[], _config: HierarchyConfig): boolean {
     const levelsFound = new Set(boundaries.map(b => b.adminLevel));
     
     // We need at least country (0) and first admin level (1)
@@ -287,11 +286,12 @@ export class GlobalAdminHierarchyService {
     }
     
     // Prefer certain source types
-    const sourceQuality = {
+    const sourceQuality: Record<string, number> = {
       'geoBoundaries': 4,
       'UN-SALB': 3,
       'GADM': 2,
       'OSM': 1,
+      'national': 0,
       'cached': 0
     };
     
@@ -303,7 +303,7 @@ export class GlobalAdminHierarchyService {
    */
   async searchGlobalAdminBoundaries(
     query: string,
-    options: {
+    _options: {
       countries?: string[];
       adminLevels?: number[];
       maxResults?: number;
@@ -321,7 +321,7 @@ export class GlobalAdminHierarchyService {
   /**
    * Get administrative boundary by ID from any source
    */
-  async getGlobalBoundaryById(id: string): Promise<GlobalAdminBoundary | null> {
+  async getGlobalBoundaryById(_id: string): Promise<GlobalAdminBoundary | null> {
     // Implementation would look up boundary across all sources
     return null;
   }
@@ -376,17 +376,17 @@ export class GlobalAdminHierarchyService {
     return `global_${config.countryCode}_${config.maxAdminLevel || 2}_${config.includeGeometry || false}`;
   }
 
-  private buildResultFromCache(cacheKey: string): any {
+  private buildResultFromCache(_cacheKey: string): any {
     // Implementation would build proper result from cached data
     return {};
   }
 
-  private buildResultFromQueue(cacheKey: string): any {
+  private buildResultFromQueue(_cacheKey: string): any {
     // Implementation would handle queued requests
     return {};
   }
 
-  private buildHierarchyResult(boundaries: GlobalAdminBoundary[], config: HierarchyConfig): any {
+  private buildHierarchyResult(_boundaries: GlobalAdminBoundary[], _config: HierarchyConfig): any {
     // Implementation would build proper hierarchy result
     return {};
   }

@@ -466,7 +466,7 @@ export const getOfflineRoute = async (
   // Get speed and calculate base duration
   const speedKmh = getSpeed(mode);
   const speedMs = speedKmh / 3.6; // Convert to m/s
-  let baseDuration = directDistance / speedMs; // Duration in seconds
+  const baseDuration = directDistance / speedMs; // Duration in seconds
   
   // Apply realistic routing factors (roads aren't straight lines)
   let routingFactor = 1.3; // Default factor for road network

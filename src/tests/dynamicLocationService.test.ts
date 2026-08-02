@@ -1,5 +1,5 @@
 // Tests for Dynamic Location Service geographical hierarchy
-import { dynamicLocationService, DynamicLocationNode } from '../services/dynamicLocationService';
+import { dynamicLocationService } from '../services/dynamicLocationService';
 
 describe('Dynamic Location Service', () => {
   beforeAll(async () => {
@@ -102,26 +102,7 @@ describe('Dynamic Location Service', () => {
 
     test('API fallback system works properly', async () => {
       // Test with a country that might not have API data
-      const testCountry: DynamicLocationNode = {
-        id: 'country_test',
-        name: 'Test Country',
-        level: 'country',
-        parentId: 'europe',
-        hasChildren: true,
-        childrenLoaded: false,
-        childrenIds: [],
-        bounds: { north: 60, south: 50, east: 10, west: 0 },
-        center: { lat: 55, lng: 5 },
-        isPreloaded: false,
-        estimatedTiles: 1000,
-        estimatedSizeMB: 20,
-        isDownloaded: false,
-        priority: 4,
-        tags: ['country'],
-        metadata: { countryCode: 'TC' },
-        lastUpdated: Date.now(),
-        source: 'api'
-      };
+      // (testCountry structure removed as it was unused)
       
       // This should gracefully fall back to predefined data or empty array
       const children = await dynamicLocationService.getChildren('country_test');

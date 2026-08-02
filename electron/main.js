@@ -1,7 +1,63 @@
 const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron');
 const path = require('path');
+const { spawn } = require('child_process');
 
 let mainWindow;
+let backendProcess;
+
+function startBackendServer() {
+  console.log('Starting backend server...');
+  
+  const isDev = process.env.NODE_ENV === 'development';
+  const backendPath = isDev 
+    ? path.join(__dirname, '../backend')
+    : path.join(process.resourcesPath, 'backend');
+  
+  // Check if backend exists
+  const fs = require('fs');
+  if (!fs.existsSync(backendPath)) {
+    console.error('Backend not found at:', backendPath);
+    return;
+  }
+  
+  const backendScript = path.join(backendPath, 'dist', 'server.js');
+  
+  if (!fs.existsSync(backendScript)) {
+    console.error('Backend script not found at:', backendScript);
+    return;
+  }
+  
+  // Start the backend server
+  backendProcess = spawn('node', [backendScript], {
+    cwd: backendPath,
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      PORT: '3001',
+      FRONTEND_URL: 'http://localhost:3000'
+    }
+  });
+  
+  backendProcess.stdout.on('data', (data) => {
+    console.log(`Backend: ${data}`);
+  });
+  
+  backendProcess.stderr.on('data', (data) => {
+    console.error(`Backend Error: ${data}`);
+  });
+  
+  backendProcess.on('exit', (code) => {
+    console.log(`Backend process exited with code ${code}`);
+  });
+}
+
+function stopBackendServer() {
+  if (backendProcess) {
+    console.log('Stopping backend server...');
+    backendProcess.kill();
+    backendProcess = null;
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -15,7 +71,7 @@ function createWindow() {
       enableRemoteModule: false,
       preload: path.join(__dirname, 'preload.js')
     },
-    icon: path.join(__dirname, '../public/icons/icon-512.png'),
+    // icon: path.join(__dirname, '../public/vite.svg'), // Disabled for build compatibility
     title: 'OpenMaps - Open Source Maps',
     show: false
   });
@@ -25,7 +81,12 @@ function createWindow() {
   
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    mainWindow.webContents.openDevTools();
+    
+    // Only open dev tools in development
+    if (process.env.NODE_ENV === 'development') {
+      mainWindow.webContents.openDevTools();
+    }
+    
     console.log('App loaded successfully');
   });
   
@@ -55,8 +116,8 @@ function createMenu() {
             dialog.showMessageBox(mainWindow, {
               type: 'info',
               title: 'About OpenMaps',
-              message: 'OpenMaps v1.0.0',
-              detail: 'Open source maps application\nBuilt with React, Leaflet, and Electron'
+              message: `OpenMaps v${app.getVersion()}`,
+              detail: 'Interactive offline-capable map application\nFeatures: Dynamic Location Explorer, Offline Routing, Map Pack System\nBuilt with React, Leaflet, TypeScript, and Electron\n\nDeveloped by the OpenMaps Team'
             });
           }
         },
@@ -108,7 +169,14 @@ function createMenu() {
 
 app.whenReady().then(() => {
   createMenu();
-  createWindow();
+  
+  // Start backend server first
+  startBackendServer();
+  
+  // Wait a moment for backend to start, then create window
+  setTimeout(() => {
+    createWindow();
+  }, 2000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -118,9 +186,14 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  stopBackendServer();
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  stopBackendServer();
 });
 
 app.setAsDefaultProtocolClient('openmaps');

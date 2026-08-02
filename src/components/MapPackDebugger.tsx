@@ -6,7 +6,6 @@ import { globalMapPackSystem } from '../services/globalMapPackSystem';
 export function MapPackDebugger() {
   const [isOpen, setIsOpen] = useState(false);
   const [cacheSize, setCacheSize] = useState(0);
-  const [tileCount, setTileCount] = useState(0);
   const [dbStatus, setDbStatus] = useState('Unknown');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
@@ -32,7 +31,6 @@ export function MapPackDebugger() {
       
       // Get actual tile count from database
       const tiles = await getTileCount();
-      setTileCount(tiles);
       
       setDbStatus('Connected');
       

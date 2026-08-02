@@ -199,7 +199,7 @@ const PolygonEditor: React.FC<PolygonEditorProps> = ({
       return;
     }
 
-    let newPolygon = [...polygon];
+    const newPolygon = [...polygon];
     indicesToDelete.forEach(index => {
       if (index >= 0 && index < newPolygon.length) {
         newPolygon.splice(index, 1);

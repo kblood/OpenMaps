@@ -2,7 +2,6 @@
 
 import { locationRegistry, LocationRegistryService } from './LocationRegistryService';
 import { dynamicLocationService, DynamicLocationNode } from '../dynamicLocationService';
-import { LocationRegistryNode, LoadingPriority } from './types';
 
 export class RegistryIntegrationService {
   private registry: LocationRegistryService;
@@ -210,7 +209,7 @@ export class RegistryIntegrationService {
     };
   }
 
-  private getPerformanceRecommendation(registryStats: any, cacheStats: any): string {
+  private getPerformanceRecommendation(_registryStats: any, cacheStats: any): string {
     if (cacheStats.sharePercentage > 50) {
       return '🚀 Excellent: High cache sharing across tree branches';
     } else if (cacheStats.sharePercentage > 25) {

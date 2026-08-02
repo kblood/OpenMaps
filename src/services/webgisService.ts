@@ -17,6 +17,19 @@ export interface BoundaryResult {
   };
 }
 
+export interface PlaceResult {
+  center: { lat: number; lng: number };
+  bounds: { north: number; south: number; east: number; west: number };
+  source: 'overpass';
+  placeType: 'city' | 'town' | 'village' | 'hamlet' | 'suburb' | 'neighbourhood';
+  properties: {
+    name: string;
+    population?: number;
+    importance?: number;
+    adminLevelHint?: number;
+  };
+}
+
 export interface SpatialQueryResult {
   contains: boolean;
   distance?: number; // km from boundary
@@ -74,13 +87,192 @@ export function boundsFromPolygon(polygon: [number, number][]) {
 }
 
 // Multi-level administrative boundary query with filtering
+// Enhanced function to get full polygon geometry for cities and administrative areas
+export async function getFullPolygonForPlace(placeName: string, location: { lat: number; lng: number }, searchRadius: number = 0.1): Promise<BoundaryResult | null> {
+  try {
+    console.log(`🌍 Searching for full polygon geometry for: ${placeName}`);
+    
+    // Create search area around the location
+    const bbox = `${location.lat - searchRadius},${location.lng - searchRadius},${location.lat + searchRadius},${location.lng + searchRadius}`;
+    const nameEscaped = placeName.replace(/['"]/g, '\\"');
+    
+    // Enhanced Overpass query to get full geometry
+    const overpassQuery = `[out:json][timeout:30];
+      (
+        // Search for administrative boundaries with matching name
+        relation["boundary"="administrative"]["name"~"^${nameEscaped}$",i](${bbox});
+        relation["boundary"="administrative"]["name:en"~"^${nameEscaped}$",i](${bbox});
+        relation["boundary"="administrative"]["alt_name"~"${nameEscaped}",i](${bbox});
+        
+        // Also search for place nodes/areas with the name
+        node["place"]["name"~"^${nameEscaped}$",i](${bbox});
+        way["place"]["name"~"^${nameEscaped}$",i](${bbox});
+        relation["place"]["name"~"^${nameEscaped}$",i](${bbox});
+        
+        // Search for specific city/town/village tags
+        node["place"~"^(city|town|village|municipality)$"]["name"~"^${nameEscaped}$",i](${bbox});
+        way["place"~"^(city|town|village|municipality)$"]["name"~"^${nameEscaped}$",i](${bbox});
+        relation["place"~"^(city|town|village|municipality)$"]["name"~"^${nameEscaped}$",i](${bbox});
+      );
+      out geom center tags bb;`;
+
+    console.log('🔍 Overpass query:', overpassQuery);
+
+    const response = await fetch(OVERPASS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: overpassQuery
+    });
+
+    if (!response.ok) throw new Error(`Overpass HTTP ${response.status}`);
+    const data = await response.json();
+
+    const elements: any[] = Array.isArray(data?.elements) ? data.elements : [];
+    console.log(`📊 Found ${elements.length} potential matches`);
+
+    if (elements.length === 0) return null;
+
+    // Score and rank the results
+    const scoredElements = elements.map(element => {
+      let score = 0;
+      const name = element.tags?.name || '';
+      const nameMatch = name.toLowerCase() === placeName.toLowerCase();
+      
+      // Exact name match gets highest score
+      if (nameMatch) score += 100;
+      
+      // Administrative boundaries get preference
+      if (element.tags?.boundary === 'administrative') score += 50;
+      
+      // Prefer relations over ways over nodes for better geometry
+      if (element.type === 'relation') score += 30;
+      else if (element.type === 'way') score += 20;
+      else score += 10;
+      
+      // Admin level preference (8=city, 6=municipality, 4=county, etc.)
+      const adminLevel = parseInt(element.tags?.admin_level || '0');
+      if (adminLevel >= 6 && adminLevel <= 10) score += 20;
+      
+      // Place type preference
+      const place = element.tags?.place;
+      if (['city', 'town'].includes(place)) score += 15;
+      else if (['village', 'municipality'].includes(place)) score += 10;
+      
+      return { element, score, nameMatch };
+    });
+
+    // Sort by score and get the best match
+    scoredElements.sort((a, b) => b.score - a.score);
+    const best = scoredElements[0];
+    
+    console.log(`🏆 Best match: ${best.element.tags?.name} (score: ${best.score}, type: ${best.element.type})`);
+
+    return await extractPolygonFromElement(best.element);
+  } catch (err) {
+    console.error('🚨 Full polygon search failed:', err);
+    return null;
+  }
+}
+
+// Helper function to extract polygon from OSM element
+async function extractPolygonFromElement(element: any): Promise<BoundaryResult | null> {
+  try {
+    let polygon: [number, number][] = [];
+
+    if (element.type === 'relation' && element.members) {
+      // For relations, we need to reconstruct the polygon from member ways
+      console.log('🔗 Processing relation with', element.members.length, 'members');
+      
+      // Get all outer way members
+      const outerWays = element.members.filter((m: any) => 
+        m.type === 'way' && (m.role === 'outer' || m.role === '')
+      );
+      
+      if (outerWays.length > 0) {
+        // For complex relations, we'll use the geometry if available
+        if (element.geometry && Array.isArray(element.geometry)) {
+          polygon = element.geometry
+            .filter((g: any) => g.type === 'node')
+            .map((g: any) => [g.lat, g.lon]);
+        }
+      }
+    } else if (element.type === 'way' && element.geometry) {
+      // For ways, extract coordinates directly
+      console.log('📍 Processing way with', element.geometry.length, 'nodes');
+      polygon = element.geometry.map((g: any) => [g.lat, g.lon]);
+    } else if (element.type === 'node') {
+      // For nodes (point places), create a small polygon around them
+      console.log('📌 Processing node, creating small polygon');
+      const lat = element.lat;
+      const lon = element.lon;
+      const size = 0.005; // ~500m radius
+      polygon = [
+        [lat - size, lon - size],
+        [lat - size, lon + size],
+        [lat + size, lon + size],
+        [lat + size, lon - size],
+        [lat - size, lon - size]
+      ];
+    }
+
+    // Ensure polygon is closed
+    if (polygon.length > 0) {
+      const first = polygon[0];
+      const last = polygon[polygon.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) {
+        polygon.push([first[0], first[1]]);
+      }
+    }
+
+    // Simplify polygon if it's too complex (more than 1000 points)
+    if (polygon.length > 1000) {
+      console.log(`🔄 Simplifying polygon from ${polygon.length} to ~200 points`);
+      const step = Math.ceil(polygon.length / 200);
+      const simplified = polygon.filter((_, i) => i % step === 0);
+      simplified.push(polygon[polygon.length - 1]); // Keep the last point
+      polygon = simplified;
+    }
+
+    if (polygon.length < 3) {
+      console.warn('⚠️ Invalid polygon geometry');
+      return null;
+    }
+
+    const bounds = boundsFromPolygon(polygon);
+    const adminLevel = parseInt(element.tags?.admin_level || '0');
+
+    console.log(`✅ Extracted polygon with ${polygon.length} points, area: ${calculatePolygonArea(polygon).toFixed(2)} km²`);
+
+    return {
+      polygon,
+      bounds,
+      source: 'overpass',
+      adminLevel,
+      properties: {
+        name: element.tags?.name || 'Unknown',
+        adminLevel,
+        population: element.tags?.population ? parseInt(element.tags.population) : undefined,
+        area: calculatePolygonArea(polygon),
+        perimeter: calculatePolygonPerimeter(polygon),
+        countryCode: element.tags?.['ISO3166-1'] || element.tags?.['country_code'],
+        parentAdmin: element.tags?.['is_in'] || element.tags?.['addr:state']
+      }
+    };
+  } catch (err) {
+    console.error('🚨 Polygon extraction failed:', err);
+    return null;
+  }
+}
+
 export async function getAdminBoundariesByQuery(query: AdminBoundaryQuery): Promise<BoundaryResult[]> {
   try {
     const adminLevels = query.adminLevels || [2, 4, 6, 8]; // Default: country, state, county, city
     const bbox = query.bbox ? `${query.bbox.south},${query.bbox.west},${query.bbox.north},${query.bbox.east}` : '';
-    
-    const levelQueries = adminLevels.map(level => 
-      `relation["boundary"="administrative"]["admin_level"="${level}"]${query.countryCode ? `["ISO3166-1"="${query.countryCode}"]` : ''}${query.nameFilter ? `["name"~"${query.nameFilter.replace('"', '\\"')}",i]` : ''}${bbox ? `(${bbox})` : ''};`
+
+    // NOTE: Avoid filtering sub-national boundaries by ISO3166-1 tag (rarely present below country).
+    // BBox constraint is sufficient for scoping; optional name filter remains.
+    const levelQueries = adminLevels.map(level =>
+      `relation["boundary"="administrative"]["admin_level"="${level}"]${query.nameFilter ? `["name"~"${query.nameFilter.replace('"', '\\"')}",i]` : ''}${bbox ? `(${bbox})` : ''};`
     ).join('\n        ');
 
     const overpassQuery = `[out:json][timeout:30];
@@ -98,11 +290,11 @@ export async function getAdminBoundariesByQuery(query: AdminBoundaryQuery): Prom
     });
 
     if (!response.ok) throw new Error(`Overpass HTTP ${response.status}`);
-    const data = await response.json();
+  const data = await response.json();
 
     const elements: any[] = Array.isArray(data?.elements) ? data.elements : [];
     
-    return elements.map(element => {
+  return elements.map(element => {
       const adminLevel = parseInt(element.tags?.admin_level || '0');
       const polygon = element.bounds ? polygonFromBounds({
         north: element.bounds.maxlat,
@@ -134,6 +326,75 @@ export async function getAdminBoundariesByQuery(query: AdminBoundaryQuery): Prom
     }).filter(result => result.polygon.length > 0);
   } catch (err) {
     console.warn('Multi-level admin boundary query failed:', err);
+    return [];
+  }
+}
+
+// Query OSM places (nodes/ways/relations) by place tag within a bbox
+export async function getPlacesByTag(options: {
+  placeTypes?: Array<'city' | 'town' | 'village' | 'hamlet' | 'suburb' | 'neighbourhood'>;
+  bbox: { north: number; south: number; east: number; west: number };
+  nameFilter?: string;
+  limit?: number;
+}): Promise<PlaceResult[]> {
+  try {
+    const types = options.placeTypes && options.placeTypes.length > 0
+      ? options.placeTypes
+      : ['city', 'town', 'village'];
+    const bbox = `${options.bbox.south},${options.bbox.west},${options.bbox.north},${options.bbox.east}`;
+    const typeRegex = `^(${types.join('|')})$`;
+    const nameClause = options.nameFilter ? `["name"~"${options.nameFilter.replace('"', '\\"')}",i]` : '';
+
+    const overpassQuery = `[out:json][timeout:30];
+      (
+        node["place"~"${typeRegex}"]${nameClause}(${bbox});
+        way["place"~"${typeRegex}"]${nameClause}(${bbox});
+        relation["place"~"${typeRegex}"]${nameClause}(${bbox});
+      );
+      out center tags bb${options.limit ? ` ${options.limit}` : ''};`;
+
+    const response = await fetch(OVERPASS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: overpassQuery
+    });
+
+    if (!response.ok) throw new Error(`Overpass HTTP ${response.status}`);
+    const data = await response.json();
+    const elements: any[] = Array.isArray(data?.elements) ? data.elements : [];
+
+    return elements.map((el: any) => {
+      const bounds = el.bounds ? {
+        north: el.bounds.maxlat,
+        south: el.bounds.minlat,
+        east: el.bounds.maxlon,
+        west: el.bounds.minlon
+      } : boundsFromPolygon(polygonFromBounds({
+        north: (el.center?.lat ?? el.lat) + 0.02,
+        south: (el.center?.lat ?? el.lat) - 0.02,
+        east: (el.center?.lon ?? el.lon) + 0.02,
+        west: (el.center?.lon ?? el.lon) - 0.02,
+      }));
+
+      const lat = el.center?.lat ?? el.lat;
+      const lon = el.center?.lon ?? el.lon;
+      const placeType = (el.tags?.place || 'city') as PlaceResult['placeType'];
+      const population = el.tags?.population ? parseInt(el.tags.population) : undefined;
+      return {
+        center: { lat, lng: lon },
+        bounds,
+        source: 'overpass' as const,
+        placeType,
+        properties: {
+          name: el.tags?.name || 'Unknown',
+          population,
+          importance: el.tags?.importance ? parseFloat(el.tags.importance) : undefined,
+          adminLevelHint: el.tags?.admin_level ? parseInt(el.tags.admin_level) : undefined
+        }
+      } as PlaceResult;
+    });
+  } catch (err) {
+    console.warn('Place query failed:', err);
     return [];
   }
 }

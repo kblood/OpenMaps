@@ -5,7 +5,6 @@ import {
   LocationRegistryNode, 
   RegistryStats, 
   CacheMetadata, 
-  AccessPath,
   LoadingPriority,
   DynamicLocationNode 
 } from './types';
@@ -14,8 +13,6 @@ import { LoadingCoordinator } from './LoadingCoordinator';
 export class LocationRegistryService {
   private registry: LocationRegistry;
   private loadingCoordinator: LoadingCoordinator;
-  private dbName = 'openmaps_location_registry';
-  private dbVersion = 1;
   private db: IDBDatabase | null = null;
 
   constructor() {
@@ -428,7 +425,7 @@ export class LocationRegistryService {
     console.log('🔄 Initializing location registry database...');
   }
 
-  private async loadFromDatabase(locationId: string): Promise<LocationRegistryNode | null> {
+  private async loadFromDatabase(_locationId: string): Promise<LocationRegistryNode | null> {
     // Database loading - to be implemented
     return null;
   }
