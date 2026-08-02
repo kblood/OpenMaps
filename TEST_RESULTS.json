@@ -1,0 +1,84 @@
+{
+  "timestamp": "2025-09-30T20:25:18.661Z",
+  "summary": {
+    "total": 12,
+    "passed": 9,
+    "failed": 3,
+    "skipped": 0,
+    "passRate": "75.0%"
+  },
+  "tests": [
+    {
+      "name": "Backend Health Check",
+      "status": "PASSED",
+      "duration": 16,
+      "message": "Backend uptime: 36.94s"
+    },
+    {
+      "name": "Search for Aalborg",
+      "status": "PASSED",
+      "duration": 2,
+      "message": "Found 1 results, first: Aalborg, Aalborg Kommune, Region Nordjylland, 9000, Danmark"
+    },
+    {
+      "name": "Search for Copenhagen",
+      "status": "PASSED",
+      "duration": 189,
+      "message": "Found 2 results, first: København"
+    },
+    {
+      "name": "Search for Denmark",
+      "status": "PASSED",
+      "duration": 1003,
+      "message": "Found 1 Danish locations"
+    },
+    {
+      "name": "Reverse Geocode Aalborg City Center",
+      "status": "PASSED",
+      "duration": 1001,
+      "message": "Location: 4C, Østerågade, Eternitten, Aalborg, Aalborg Kommune, Region Nordjylland, 9000, Danmark"
+    },
+    {
+      "name": "Route: City Center to University (Driving)",
+      "status": "PASSED",
+      "duration": 2,
+      "message": "Distance: 7.54km, Duration: 13.5min"
+    },
+    {
+      "name": "Route: City Center to University (Walking)",
+      "status": "PASSED",
+      "duration": 145,
+      "message": "Distance: 6.78km"
+    },
+    {
+      "name": "Route: City Center to Airport",
+      "status": "PASSED",
+      "duration": 100,
+      "message": "Distance: 7.22km (expect ~7km)"
+    },
+    {
+      "name": "Offline Routing Status",
+      "status": "FAILED",
+      "duration": 2,
+      "message": "BRouter available: undefined, Profiles: 0"
+    },
+    {
+      "name": "Mathematical Offline Route (Fallback)",
+      "status": "FAILED",
+      "duration": 2,
+      "message": "Offline: false, Provider: unknown"
+    },
+    {
+      "name": "Get Denmark Regions",
+      "status": "PASSED",
+      "duration": 2876,
+      "message": "Found 5 Danish regions"
+    },
+    {
+      "name": "Frontend Accessible",
+      "status": "FAILED",
+      "duration": 2,
+      "message": "Status: 404"
+    }
+  ]
+}

@@ -22,6 +22,7 @@
     "start": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm run dev:backend\" \"npm run dev\"",
     "build": "vite build",
     "build:prod": "tsc --project tsconfig.prod.json --noEmit && vite build",
+    "build:check": "tsc && vite build",
     "build:backend": "cd backend && npm run build",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives",

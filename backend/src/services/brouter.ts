@@ -1,8 +1,19 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execSync } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { createWriteStream, existsSync } from 'fs';
 import https from 'https';
+
+// BRouter JAR acquisition sources.
+// Primary: official GitHub release ZIP (newer BRouter version, but a single
+// source that can rate-limit or go down). Fallback: a direct JAR mirrored on
+// Maven Central (older but very reliable/always-available version). Bumping
+// either version later only requires updating the *_VERSION constant below.
+const BROUTER_PRIMARY_VERSION = '1.7.8';
+const BROUTER_PRIMARY_ZIP_URL = `https://github.com/abrensch/brouter/releases/download/v${BROUTER_PRIMARY_VERSION}/brouter-${BROUTER_PRIMARY_VERSION}.zip`;
+
+const BROUTER_FALLBACK_VERSION = '1.6.1';
+const BROUTER_FALLBACK_JAR_URL = `https://repo1.maven.org/maven2/de/dkfz/odcf/brouter/${BROUTER_FALLBACK_VERSION}/brouter-${BROUTER_FALLBACK_VERSION}.jar`;
 
 export interface BRouterConfig {
   jarPath: string;
@@ -110,63 +121,91 @@ export class BRouterService {
       }
     }
 
-    console.log('📦 Downloading BRouter...');
-    
-    // BRouter releases are now ZIP files containing the JAR
-    const zipUrl = 'https://github.com/abrensch/brouter/releases/download/v1.7.8/brouter-1.7.8.zip';
-    const zipPath = path.join(path.dirname(this.config.jarPath), 'brouter-1.7.8.zip');
-    
+    // Primary: download the official GitHub release ZIP and extract the JAR
+    // from it (keeps us on the newer BRouter version line). If that whole
+    // path fails for any reason (network block, GitHub rate-limit, extraction
+    // failure), fall back to pulling a prebuilt JAR directly from Maven
+    // Central, which is smaller/simpler and a different, more available host.
     try {
-      await this.downloadFile(zipUrl, zipPath);
-      console.log('📦 Downloaded BRouter ZIP, extracting...');
-      
-      // Extract JAR from ZIP using built-in unzip
-      const { execSync } = await import('child_process');
-      const extractDir = path.dirname(this.config.jarPath);
-      
-      try {
-        // Try PowerShell extraction (Windows)
-        execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`, { stdio: 'pipe' });
-      } catch {
-        // Fallback: Try unzip (Linux/Mac)
-        try {
-          execSync(`unzip -o "${zipPath}" -d "${extractDir}"`, { stdio: 'pipe' });
-        } catch {
-          console.log('⚠️ Could not extract ZIP file - unzip/PowerShell not available');
-          throw new Error('ZIP extraction failed');
-        }
-      }
-      
-      // Find the JAR file in extracted contents
-      const extractedDir = path.join(extractDir, 'brouter-1.7.8');
-      const jarFile = path.join(extractedDir, 'brouter.jar');
-      
-      if (existsSync(jarFile)) {
-        // Move JAR to expected location
-        await fs.rename(jarFile, this.config.jarPath);
-        console.log('✅ BRouter JAR extracted and installed');
-      } else {
-        // Look for any JAR file
-        const files = await fs.readdir(extractedDir);
-        const jarFiles = files.filter(f => f.endsWith('.jar'));
-        if (jarFiles.length > 0) {
-          await fs.rename(path.join(extractedDir, jarFiles[0]), this.config.jarPath);
-          console.log('✅ BRouter JAR extracted and installed');
-        } else {
-          throw new Error('No JAR file found in ZIP');
-        }
-      }
-      
-      // Cleanup ZIP file
-      try {
-        await fs.unlink(zipPath);
-      } catch { /* ignore cleanup errors */ }
-      
+      await this.downloadJarFromGitHubZip();
+      console.log(`✅ BRouter JAR ${BROUTER_PRIMARY_VERSION} installed via GitHub release ZIP (primary source)`);
+      return;
     } catch (error) {
-      console.error('❌ Failed to download BRouter:', error);
+      console.error('❌ Primary BRouter JAR source (GitHub ZIP) failed:', error);
+      console.log('↪️ Falling back to Maven Central direct JAR download...');
+    }
+
+    try {
+      await this.downloadJarFromMaven();
+      console.log(`✅ BRouter JAR ${BROUTER_FALLBACK_VERSION} installed via Maven Central (fallback source)`);
+    } catch (error) {
+      console.error('❌ Fallback BRouter JAR source (Maven Central) also failed:', error);
       console.log('⚠️ BRouter will not be available, routing will fall back to mathematical calculation');
       // Don't throw error, let the service continue without BRouter
     }
+  }
+
+  /**
+   * Primary JAR acquisition path: BRouter releases are shipped as a ZIP
+   * containing the JAR. Download it, extract with PowerShell (Windows) or
+   * `unzip` (Linux/Mac), locate the JAR inside, move it into place, and clean
+   * up the ZIP. Throws on any failure so the caller can fall back.
+   */
+  private async downloadJarFromGitHubZip(): Promise<void> {
+    console.log(`📦 Downloading BRouter ${BROUTER_PRIMARY_VERSION} from GitHub...`);
+
+    const zipPath = path.join(path.dirname(this.config.jarPath), `brouter-${BROUTER_PRIMARY_VERSION}.zip`);
+
+    await this.downloadFile(BROUTER_PRIMARY_ZIP_URL, zipPath);
+    console.log('📦 Downloaded BRouter ZIP, extracting...');
+
+    const extractDir = path.dirname(this.config.jarPath);
+
+    try {
+      // Try PowerShell extraction (Windows)
+      execSync(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`, { stdio: 'pipe' });
+    } catch {
+      // Fallback: Try unzip (Linux/Mac)
+      try {
+        execSync(`unzip -o "${zipPath}" -d "${extractDir}"`, { stdio: 'pipe' });
+      } catch {
+        console.log('⚠️ Could not extract ZIP file - unzip/PowerShell not available');
+        throw new Error('ZIP extraction failed');
+      }
+    }
+
+    // Find the JAR file in extracted contents
+    const extractedDir = path.join(extractDir, `brouter-${BROUTER_PRIMARY_VERSION}`);
+    const jarFile = path.join(extractedDir, 'brouter.jar');
+
+    if (existsSync(jarFile)) {
+      // Move JAR to expected location
+      await fs.rename(jarFile, this.config.jarPath);
+    } else {
+      // Look for any JAR file
+      const files = await fs.readdir(extractedDir);
+      const jarFiles = files.filter(f => f.endsWith('.jar'));
+      if (jarFiles.length > 0) {
+        await fs.rename(path.join(extractedDir, jarFiles[0]), this.config.jarPath);
+      } else {
+        throw new Error('No JAR file found in ZIP');
+      }
+    }
+
+    // Cleanup ZIP file
+    try {
+      await fs.unlink(zipPath);
+    } catch { /* ignore cleanup errors */ }
+  }
+
+  /**
+   * Fallback JAR acquisition path: a prebuilt JAR mirrored on Maven Central.
+   * No extraction step, so it has fewer ways to fail than the GitHub ZIP
+   * path — used when that primary path throws.
+   */
+  private async downloadJarFromMaven(): Promise<void> {
+    console.log(`📦 Downloading BRouter ${BROUTER_FALLBACK_VERSION} JAR from Maven Central...`);
+    await this.downloadFile(BROUTER_FALLBACK_JAR_URL, this.config.jarPath);
   }
 
   private async downloadFile(url: string, outputPath: string): Promise<void> {
